@@ -9,9 +9,14 @@ import SwiftUI
 
 @main
 struct WatchLogsApp: App {
+    private let probe = NowPlayingProbe()
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear {
+                    probe.start()
+                }
         }
     }
 }
