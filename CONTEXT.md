@@ -39,8 +39,12 @@ attaches to the View. A new video id in the same tab ends the View and starts an
 
 One continuous span of real time during which a View's Watched conditions held true. A
 View has many Segments. Segments are never merged: watching the same stretch of a video
-twice produces two Segments. Each Segment also records the start and end position on the
-video's own timeline.
+twice produces two Segments. A seek splits a Segment, so each Segment covers one unbroken
+range of the video's own timeline, and records that range's start and end position.
+
+Every Segment is either **watched** (Watched conditions held) or **background** (the
+video was playing but its tab was not in the foreground). Only watched Segments add to
+Watched time.
 
 ### Watched time
 
@@ -50,8 +54,9 @@ still counts. Picture-in-Picture still counts.
 
 ### Background audio
 
-Sound from a View whose tab is not in the foreground. Recorded and marked `background`.
-It does not add to Watched time; it is kept so analysis can later include or exclude it.
+Sound from a View whose tab is not in the foreground. Recorded as **background**
+Segments (see Segment). It does not add to Watched time; it is kept so analysis can
+later include or exclude it.
 
 ### Service
 
