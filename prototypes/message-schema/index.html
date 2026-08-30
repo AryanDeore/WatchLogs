@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WatchLogs — Message schema prototype (Flush payload &amp; Events)</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --panel-2: #232733;
+    --ink: #e7e9ee;
+    --ink-dim: #9aa3b2;
+    --line: #2f3542;
+    --accent: #6ea8fe;
+    --good: #4ec9a5;
+    --warn: #e0a458;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 22px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-dim); margin: 26px 0 10px; }
+  h3 { font-size: 13px; margin: 16px 0 6px; color: var(--ink); }
+  p { margin: 6px 0; }
+  .lede { color: var(--ink-dim); max-width: 760px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 960px) { .cols { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card.tight { padding: 12px 14px; }
+  button {
+    font: inherit; color: var(--ink); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 11px;
+    cursor: pointer; margin: 3px 4px 3px 0;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #24304a; border-color: #35507f; }
+  button.step { display: block; width: 100%; text-align: left; margin: 4px 0; }
+  button.step.done { opacity: .45; }
+  button.step.next { border-color: var(--accent); background: #24304a; }
+  button:disabled { opacity: .3; cursor: not-allowed; }
+  .row { margin: 2px 0; }
+  .kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 12px; }
+  .kv div:nth-child(odd) { color: var(--ink-dim); }
+  code, pre { font-family: var(--mono); }
+  pre {
+    background: #0f1115; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; overflow: auto; font-size: 12.5px; line-height: 1.5; max-height: 560px;
+  }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim); }
+  .pill.on { color: var(--good); border-color: #2e5c4f; }
+  .pill.off { color: var(--warn); border-color: #5c4a2e; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+  .tabs button { border-radius: 7px 7px 0 0; margin: 0; border-bottom: none; }
+  .tabs button.active { background: var(--panel); border-color: var(--accent); }
+  .muted { color: var(--ink-dim); }
+  .changed { color: var(--accent); }
+  .clock { font-family: var(--mono); font-size: 13px; }
+  details { margin: 8px 0; }
+  summary { cursor: pointer; color: var(--ink-dim); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { color: var(--ink-dim); font-weight: 600; }
+  td code { color: var(--accent); }
+  .q { border-left: 3px solid var(--warn); padding: 2px 0 2px 12px; margin: 10px 0; }
+  .q b { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Message schema prototype — the Flush payload &amp; Event objects</h1>
+  <p class="lede">
+    <b>Question this answers</b> (wayfinder ticket
+    <a href="https://github.com/AryanDeore/WatchLogs/issues/2">#2</a>):
+    what exactly does the Extension POST to the App on a Flush? Drive a mock viewing
+    session with the domain-language buttons below and watch the <b>exact JSON body</b>
+    that would go over the wire build up on the right. The goal is to feel whether this
+    shape can represent every case — seeks, video changes in one tab, background audio,
+    crash recovery — <i>before</i> it is written into the Extension. Everything here is
+    throwaway; the pure <code>buildFlush()</code> module in the source is the only part
+    meant to survive.
+  </p>
+
+  <div class="cols">
+    <!-- LEFT: drivers -->
+    <div>
+      <div class="card">
+        <h2 style="margin-top:0">Simulated clock</h2>
+        <p class="clock">
+          wall time <span id="wallClock">—</span><br />
+          <span class="muted">Actions that imply elapsed time advance it; "Advance 5s" also emits a <code>sample</code> on every playing View (mirrors the 5s Flush cadence).</span>
+        </p>
+        <button id="advance" class="primary">Advance 5s ⏱ (sample tick)</button>
+        <button id="flushBtn" class="primary">POST Flush → App</button>
+        <button id="resetBtn">Reset session</button>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Free play</h2>
+        <p class="muted" style="margin-top:0">One button per Event the Extension can capture. Always available, any order.</p>
+        <div>
+          <button data-act="OPEN">Open YouTube video</button>
+          <button data-act="OPEN_NETFLIX">Open Netflix title</button>
+          <button data-act="OPEN_EMBED">Open embedded video (blog)</button>
+          <button data-act="OPEN_GENERIC">Open video, no Adapter</button>
+        </div>
+        <div>
+          <button data-act="PLAY">Play</button>
+          <button data-act="PAUSE">Pause</button>
+          <button data-act="SEEK_BACK">Seek back 30s</button>
+          <button data-act="SEEK_FWD">Seek forward 60s</button>
+          <button data-act="RATE_2X">Set speed 2×</button>
+          <button data-act="RATE_1X">Set speed 1×</button>
+        </div>
+        <div>
+          <button data-act="HIDE">Tab → background</button>
+          <button data-act="SHOW">Tab → foreground</button>
+          <button data-act="PIP_ENTER">Enter Picture-in-Picture</button>
+          <button data-act="PIP_LEAVE">Leave Picture-in-Picture</button>
+        </div>
+        <div>
+          <button data-act="META">Adapter metadata arrives (title/author)</button>
+          <button data-act="CHANGE_VIDEO">Change video (same tab)</button>
+        </div>
+        <div>
+          <button data-act="MEDIA_ENDED">Video reaches its end</button>
+          <button data-act="NAV_AWAY">Navigate away</button>
+          <button data-act="CLOSE_TAB">Close tab</button>
+          <button data-act="CRASH">Browser crashes</button>
+          <button data-act="RESTART">Extension restarts (recover)</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Guided walkthroughs</h2>
+        <div class="tabs" id="scenarioTabs"></div>
+        <div id="scenarioBody"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: state + payload -->
+    <div>
+      <div class="card">
+        <h2 style="margin-top:0">Session state <span class="muted">(Extension-side, in memory)</span></h2>
+        <div id="statePanel"></div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Next Flush — exact POST body</h2>
+        <p class="muted" style="margin-top:0">
+          <code>POST http://127.0.0.1:&lt;port&gt;/flush</code> ·
+          carries every View touched since the last Flush, with only its <i>new</i> Events.
+          Closed Views ride along once, then drop.
+        </p>
+        <pre id="payload">—</pre>
+        <h3>Last Ack from App</h3>
+        <pre id="ack" style="max-height:140px">— (no Flush sent yet)</pre>
+      </div>
+    </div>
+  </div>
+
+  <h2>Field reference</h2>
+  <div class="card">
+    <h3>Envelope</h3>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req?</th><th>Notes</th></tr>
+      <tr><td><code>schemaVersion</code></td><td>int</td><td>yes</td><td>Bumped only on a breaking change. App rejects an unknown value with <code>415</code> + <code>{error:"schemaVersion"}</code> rather than guessing.</td></tr>
+      <tr><td><code>flushId</code></td><td>string (uuidv4)</td><td>yes</td><td>New per POST attempt. A re-send after a lost Ack reuses the same <code>flushId</code>; the App dedups on it and replays the stored Ack.</td></tr>
+      <tr><td><code>sentAt</code></td><td>int (epoch ms)</td><td>yes</td><td>Extension wall clock when the POST was built. Lets the App measure clock skew against its own receipt time.</td></tr>
+      <tr><td><code>agent</code></td><td>object</td><td>yes</td><td><code>{extInstanceId, extVersion, browser, os}</code>. <code>extInstanceId</code> is a random id minted on install — stable across restarts, distinguishes two browsers pointed at one App.</td></tr>
+      <tr><td><code>views</code></td><td>View[]</td><td>yes</td><td>May be empty (a heartbeat Flush that only advances <code>sentAt</code>). Never null.</td></tr>
+    </table>
+
+    <h3>View</h3>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req?</th><th>Notes</th></tr>
+      <tr><td><code>viewId</code></td><td>string (uuidv4)</td><td>yes</td><td>Minted by the Extension when the View starts. Stable across Flushes — the App's correlation + idempotency key for the View.</td></tr>
+      <tr><td><code>service</code></td><td>string</td><td>yes</td><td>Adapter's Service id (<code>youtube</code>, <code>netflix</code>) or, with no Adapter, the bare hostname.</td></tr>
+      <tr><td><code>contentFormat</code></td><td>enum</td><td>yes</td><td><code>short</code> | <code>standard</code> | <code>live</code>. Best guess at start; a later correction is a <code>metadataChange</code>.</td></tr>
+      <tr><td><code>embedded</code></td><td>bool</td><td>yes</td><td>true when the player is on a third-party page, not the Service's own site.</td></tr>
+      <tr><td><code>videoId</code></td><td>string</td><td>yes</td><td>Service-native id. For a no-Adapter site, a hash of the normalised URL.</td></tr>
+      <tr><td><code>url</code></td><td>string</td><td>yes</td><td>Page URL, query stripped except Service-significant params (e.g. YouTube <code>v</code>).</td></tr>
+      <tr><td><code>title</code></td><td>string | null</td><td>no</td><td>null until metadata resolves. View header always holds the latest known value.</td></tr>
+      <tr><td><code>author</code></td><td>string | null</td><td>no</td><td>Channel / uploader / studio.</td></tr>
+      <tr><td><code>artworkUrl</code></td><td>string | null</td><td>no</td><td>Thumbnail / poster.</td></tr>
+      <tr><td><code>durationSec</code></td><td>number | null</td><td>no</td><td>null for live or not-yet-known. Float seconds.</td></tr>
+      <tr><td><code>metadataSource</code></td><td>enum | null</td><td>no</td><td><code>mediaSession</code> | <code>adapter</code> | <code>generic</code>. null before any metadata.</td></tr>
+      <tr><td><code>adapterId</code></td><td>string | null</td><td>no</td><td>Which Adapter produced metadata; null when <code>generic</code>.</td></tr>
+      <tr><td><code>tabId</code></td><td>int</td><td>yes</td><td>Browser tab id. Not globally unique over time — <code>viewId</code> is the stable key.</td></tr>
+      <tr><td><code>startedAt</code></td><td>int (epoch ms)</td><td>yes</td><td>When the View started (first <code>mediaFound</code>).</td></tr>
+      <tr><td><code>open</code></td><td>bool</td><td>yes</td><td>Convenience mirror: <code>false</code> ⟺ this batch contains the View's <code>viewEnded</code>. Derivable — see open question 4.</td></tr>
+      <tr><td><code>previousViewId</code></td><td>string | null</td><td>no</td><td>Set when this View began because the tab's video id changed. Links the chain; null otherwise.</td></tr>
+      <tr><td><code>events</code></td><td>Event[]</td><td>yes</td><td>Only Events with <code>seq</code> above the last Ack'd value for this View. Ordered by <code>seq</code>.</td></tr>
+    </table>
+
+    <h3>Event — common envelope</h3>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req?</th><th>Notes</th></tr>
+      <tr><td><code>seq</code></td><td>int</td><td>yes</td><td>Monotonic per View, from 1. Ordering + dedup key for partial re-sends.</td></tr>
+      <tr><td><code>type</code></td><td>enum</td><td>yes</td><td>See next table.</td></tr>
+      <tr><td><code>t</code></td><td>int (epoch ms)</td><td>yes</td><td>Extension wall clock at capture.</td></tr>
+      <tr><td><code>pos</code></td><td>number | null</td><td>no</td><td>Media position, float seconds, at capture. null where the player has no position (pre-play, live with no DVR).</td></tr>
+    </table>
+
+    <h3>Event — type-specific fields</h3>
+    <table>
+      <tr><th><code>type</code></th><th>Extra fields</th><th>Meaning</th></tr>
+      <tr><td><code>mediaFound</code></td><td>—</td><td>A media element with a resolvable id appeared. Starts the View.</td></tr>
+      <tr><td><code>play</code></td><td>—</td><td>Playback began / resumed.</td></tr>
+      <tr><td><code>pause</code></td><td>—</td><td>Playback paused (user, buffering stall, or tab throttle).</td></tr>
+      <tr><td><code>seeked</code></td><td><code>from</code>, <code>to</code> (number, sec)</td><td>Position jumped. <code>from</code> is the pre-seek position.</td></tr>
+      <tr><td><code>ratechange</code></td><td><code>rate</code> (number)</td><td>Playback speed changed. Watched time still accrues in wall-clock, not media time.</td></tr>
+      <tr><td><code>visible</code> / <code>hidden</code></td><td>—</td><td>Tab entered / left the foreground (<code>visibilitychange</code>).</td></tr>
+      <tr><td><code>pipEnter</code> / <code>pipLeave</code></td><td>—</td><td>Picture-in-Picture toggled. PiP still counts as Watched.</td></tr>
+      <tr><td><code>metadataChange</code></td><td><code>changed</code> (object: field → new value)</td><td>One or more View header fields resolved or changed. The View header also carries the new values.</td></tr>
+      <tr><td><code>sample</code></td><td><code>playing</code> (bool), <code>visible</code> (bool)</td><td>5s heartbeat. Bounds data loss and lets the App detect a missed <code>pause</code>/<code>hidden</code>. <code>pos</code> is the sampled position.</td></tr>
+      <tr><td><code>ended</code></td><td>—</td><td>Media reached its natural end. The View may still receive more Events (a replay).</td></tr>
+      <tr><td><code>viewEnded</code></td><td><code>reason</code> (enum)</td><td><code>nav</code> | <code>tab-closed</code> | <code>video-changed</code> | <code>crash-recovered</code>. Last Event of the View. For <code>crash-recovered</code>, <code>t</code>/<code>pos</code> are the last known <code>sample</code>, not "now".</td></tr>
+    </table>
+  </div>
+
+  <h2>Open questions this prototype is here to settle</h2>
+  <div class="card">
+    <div class="q"><b>1. Time as epoch-ms int, not ISO string.</b> Smaller, trivially comparable, and skew-correction is arithmetic. Logs lose readability. Prototype assumes epoch ms everywhere (<code>t</code>, <code>sentAt</code>, <code>startedAt</code>). OK?</div>
+    <div class="q"><b>2. Position in float seconds, not ms.</b> Matches <code>HTMLMediaElement.currentTime</code>. Rounded to 3 decimals on the wire. OK?</div>
+    <div class="q"><b>3. Extension mints <code>viewId</code> / <code>flushId</code> (uuidv4).</b> App never generates ids; it correlates on <code>viewId</code> and dedups Flushes on <code>flushId</code>. Alternative: App assigns ids on first sight and Acks them back. Prototype uses Extension-minted. OK?</div>
+    <div class="q"><b>4. Is <code>open</code> redundant?</b> It equals "this batch has no <code>viewEnded</code> for the View." Keep as a convenience field, or drop it and make the App derive it? Prototype keeps it, flagged.</div>
+    <div class="q"><b>5. <code>videoChange</code> dropped as a standalone Event.</b> A new video id in one tab = old View gets <code>viewEnded</code> reason <code>video-changed</code>, new View starts with <code>previousViewId</code> set. No separate <code>videoChange</code> event. Agree, or is an explicit event still wanted?</div>
+    <div class="q"><b>6. <code>sample</code> cadence = Flush cadence (5s).</b> So a normal Flush carries ~1 sample per active View. Ticket <a href="https://github.com/AryanDeore/WatchLogs/issues/6">#6</a> (Segment rules) may want finer (1s) samples to bound loss — that would decouple the two cadences. Leave at 5s for now?</div>
+    <div class="q"><b>7. Idempotency: Flush-level + Event <code>seq</code>.</b> App stores seen <code>flushId</code>s and replays the Ack on a dup. Within a View, <code>seq</code> lets a re-send that overlaps a prior partial success dedup cleanly. Ack returns the highest <code>seq</code> accepted per View. Enough?</div>
+    <div class="q"><b>8. Ack shape.</b> <code>{ flushId, accepted: true, views: [{ viewId, ackSeq }], serverTime }</code>. On rejection: HTTP 4xx + <code>{ error }</code>, no body-level partial failure. Fine, or does the App need per-View partial accept?</div>
+    <div class="q"><b>9. Metadata lives in two places.</b> The View header always holds the latest known title/author/etc., <i>and</i> a <code>metadataChange</code> event records the moment it changed. Redundant-but-useful, or header-only?</div>
+    <div class="q"><b>10. <code>background</code> is not on the wire.</b> The Extension reports raw facts (<code>hidden</code>, <code>sample.visible=false</code>); the App decides what is Background audio. Confirm the schema carries no derived/computed fields at all.</div>
+  </div>
+
+  <p class="muted" style="margin-top:26px">
+    Prototype for <a href="https://github.com/AryanDeore/WatchLogs/issues/2">issue #2</a> ·
+    parent map <a href="https://github.com/AryanDeore/WatchLogs/issues/1">#1</a> ·
+    throwaway — not production code.
+  </p>
+</div>
+
+<script>
+/* =========================================================================
+   PURE MODULE — buildFlush() and the session reducer.
+   No DOM, no globals reached from outside. This is the part meant to lift
+   into the Extension's capture layer. Everything below the divider is the
+   throwaway page shell.
+   ========================================================================= */
+const SCHEMA_VERSION = 1;
+
+const AGENT = {
+  extInstanceId: "ext-inst-7f3a9c21",
+  extVersion: "0.1.0-proto",
+  browser: "chrome",
+  os: "macOS 15.6",
+};
+
+function uuid(prefix) {
+  // deterministic-ish fake for a readable prototype
+  uuid._n = (uuid._n || 0) + 1;
+  return `${prefix}-${String(uuid._n).padStart(4, "0")}-a1b2c3`;
+}
+
+function initSession(now) {
+  return {
+    now,                    // simulated wall clock, epoch ms
+    tabVisible: true,
+    pip: false,
+    rate: 1,
+    tabId: 41,
+    views: {},              // viewId -> view
+    activeViewId: null,
+    order: [],              // viewIds in creation order
+    lastFlushAckSeq: {},    // viewId -> highest seq the App has Ack'd
+    flushedClosed: {},      // viewId -> true once a closed view has ridden one Flush
+    crashed: false,
+    lastSampleSnapshot: {}, // viewId -> {t, pos} for crash recovery
+  };
+}
+
+function newView(s, opts) {
+  const viewId = uuid("view");
+  const v = {
+    viewId,
+    service: opts.service,
+    contentFormat: opts.contentFormat,
+    embedded: !!opts.embedded,
+    videoId: opts.videoId,
+    url: opts.url,
+    title: opts.title ?? null,
+    author: opts.author ?? null,
+    artworkUrl: opts.artworkUrl ?? null,
+    durationSec: opts.durationSec ?? null,
+    metadataSource: opts.metadataSource ?? null,
+    adapterId: opts.adapterId ?? null,
+    tabId: s.tabId,
+    startedAt: s.now,
+    open: true,
+    previousViewId: opts.previousViewId ?? null,
+    events: [],
+    _seq: 0,
+    _playing: false,
+    _pos: 0,
+  };
+  s.views[viewId] = v;
+  s.order.push(viewId);
+  s.activeViewId = viewId;
+  s.lastFlushAckSeq[viewId] = 0;
+  emit(s, viewId, "mediaFound", {});
+  return v;
+}
+
+function emit(s, viewId, type, extra) {
+  const v = s.views[viewId];
+  if (!v) return;
+  v._seq += 1;
+  const ev = { seq: v._seq, type, t: s.now, pos: round3(v._pos) };
+  Object.assign(ev, extra);
+  v.events.push(ev);
+  if (type === "sample") s.lastSampleSnapshot[viewId] = { t: s.now, pos: round3(v._pos) };
+}
+
+function round3(n) {
+  return n == null ? null : Math.round(n * 1000) / 1000;
+}
+
+/* advance simulated time; positions move only for playing, non-crashed views */
+function advance(s, ms) {
+  if (s.crashed) { s.now += ms; return; }
+  s.now += ms;
+  for (const id of s.order) {
+    const v = s.views[id];
+    if (v.open && v._playing) v._pos += (ms / 1000) * s.rate;
+  }
+}
+
+/* the reducer: one domain action -> mutated session */
+function apply(s, action) {
+  const a = s.activeViewId ? s.views[s.activeViewId] : null;
+
+  switch (action.type) {
+    case "OPEN":
+      newView(s, { service: "youtube", contentFormat: "standard", embedded: false,
+        videoId: "dQw4w9WgXcQ", url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        durationSec: 213 });
+      break;
+    case "OPEN_NETFLIX":
+      newView(s, { service: "netflix", contentFormat: "standard", embedded: false,
+        videoId: "81234567", url: "https://www.netflix.com/watch/81234567",
+        durationSec: 3120 });
+      break;
+    case "OPEN_EMBED":
+      newView(s, { service: "youtube", contentFormat: "standard", embedded: true,
+        videoId: "aQ8xEjc0M2k", url: "https://someblog.example/post/hi",
+        durationSec: 640 });
+      break;
+    case "OPEN_GENERIC":
+      newView(s, { service: "cdn.example", contentFormat: "standard", embedded: false,
+        videoId: "sha1:9c2f...e1", url: "https://cdn.example/v/clip.mp4",
+        metadataSource: "generic", adapterId: null });
+      break;
+
+    case "PLAY":
+      if (a && !a._playing) { a._playing = true; emit(s, a.viewId, "play", {}); }
+      break;
+    case "PAUSE":
+      if (a && a._playing) { a._playing = false; emit(s, a.viewId, "pause", {}); }
+      break;
+    case "SEEK_BACK":
+      if (a) { const from = a._pos; a._pos = Math.max(0, a._pos - 30);
+        emit(s, a.viewId, "seeked", { from: round3(from), to: round3(a._pos) }); }
+      break;
+    case "SEEK_FWD":
+      if (a) { const from = a._pos; a._pos = a._pos + 60;
+        emit(s, a.viewId, "seeked", { from: round3(from), to: round3(a._pos) }); }
+      break;
+    case "RATE_2X":
+      if (s.rate !== 2) { s.rate = 2; if (a) emit(s, a.viewId, "ratechange", { rate: 2 }); }
+      break;
+    case "RATE_1X":
+      if (s.rate !== 1) { s.rate = 1; if (a) emit(s, a.viewId, "ratechange", { rate: 1 }); }
+      break;
+
+    case "HIDE":
+      if (s.tabVisible) { s.tabVisible = false; if (a) emit(s, a.viewId, "hidden", {}); }
+      break;
+    case "SHOW":
+      if (!s.tabVisible) { s.tabVisible = true; if (a) emit(s, a.viewId, "visible", {}); }
+      break;
+    case "PIP_ENTER":
+      if (!s.pip) { s.pip = true; if (a) emit(s, a.viewId, "pipEnter", {}); }
+      break;
+    case "PIP_LEAVE":
+      if (s.pip) { s.pip = false; if (a) emit(s, a.viewId, "pipLeave", {}); }
+      break;
+
+    case "META":
+      if (a) {
+        const changed = { title: "Never Gonna Give You Up", author: "Rick Astley",
+          artworkUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" };
+        Object.assign(a, changed);
+        a.metadataSource = "adapter";
+        a.adapterId = a.service;
+        emit(s, a.viewId, "metadataChange", { changed });
+      }
+      break;
+
+    case "CHANGE_VIDEO":
+      if (a) {
+        a._playing = false;
+        emit(s, a.viewId, "viewEnded", { reason: "video-changed" });
+        a.open = false;
+        const nv = newView(s, { service: a.service, contentFormat: "standard",
+          embedded: a.embedded, videoId: "kJQP7kiw5Fk",
+          url: "https://www.youtube.com/watch?v=kJQP7kiw5Fk", durationSec: 282,
+          previousViewId: a.viewId });
+        nv._playing = false;
+      }
+      break;
+
+    case "MEDIA_ENDED":
+      if (a) { a._playing = false; emit(s, a.viewId, "ended", {}); }
+      break;
+    case "NAV_AWAY":
+      if (a) { a._playing = false; emit(s, a.viewId, "viewEnded", { reason: "nav" }); a.open = false; s.activeViewId = null; }
+      break;
+    case "CLOSE_TAB":
+      if (a) { a._playing = false; emit(s, a.viewId, "viewEnded", { reason: "tab-closed" }); a.open = false; s.activeViewId = null; }
+      break;
+
+    case "CRASH":
+      s.crashed = true;
+      // no events: the crash is by definition unobserved
+      break;
+    case "RESTART":
+      if (s.crashed) {
+        s.crashed = false;
+        for (const id of s.order) {
+          const v = s.views[id];
+          if (v.open) {
+            const snap = s.lastSampleSnapshot[id] || { t: v.startedAt, pos: 0 };
+            v._playing = false;
+            v._seq += 1;
+            v.events.push({ seq: v._seq, type: "viewEnded", t: snap.t,
+              pos: round3(snap.pos), reason: "crash-recovered" });
+            v.open = false;
+          }
+        }
+        s.activeViewId = null;
+      }
+      break;
+  }
+  return s;
+}
+
+/* build the POST body for the next Flush, given what the App has already Ack'd.
+   preview:true renders the body without consuming a real flushId. */
+function buildFlush(s, preview) {
+  const views = [];
+  for (const id of s.order) {
+    const v = s.views[id];
+    const since = s.lastFlushAckSeq[id] || 0;
+    const fresh = v.events.filter((e) => e.seq > since);
+    const closedAlreadyFlushed = !v.open && s.flushedClosed[id];
+    if (fresh.length === 0 && v.open) continue;      // nothing new on an open view
+    if (closedAlreadyFlushed) continue;              // closed view already delivered
+    views.push({
+      viewId: v.viewId, service: v.service, contentFormat: v.contentFormat,
+      embedded: v.embedded, videoId: v.videoId, url: v.url, title: v.title,
+      author: v.author, artworkUrl: v.artworkUrl, durationSec: v.durationSec,
+      metadataSource: v.metadataSource, adapterId: v.adapterId, tabId: v.tabId,
+      startedAt: v.startedAt, open: v.open, previousViewId: v.previousViewId,
+      events: fresh,
+    });
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    flushId: preview ? "<uuidv4, assigned on send>" : uuid("flush"),
+    sentAt: s.now,
+    agent: AGENT,
+    views,
+  };
+}
+
+/* the App's side, just enough to produce a realistic Ack */
+function receiveFlush(s, payload) {
+  for (const v of payload.views) {
+    const maxSeq = v.events.reduce((m, e) => Math.max(m, e.seq), s.lastFlushAckSeq[v.viewId] || 0);
+    s.lastFlushAckSeq[v.viewId] = maxSeq;
+    if (!v.open) s.flushedClosed[v.viewId] = true;
+  }
+  return {
+    flushId: payload.flushId,
+    accepted: true,
+    views: payload.views.map((v) => ({ viewId: v.viewId, ackSeq: s.lastFlushAckSeq[v.viewId] })),
+    serverTime: s.now + 3,
+  };
+}
+
+/* =========================================================================
+   THROWAWAY PAGE SHELL below this line.
+   ========================================================================= */
+const START = Date.UTC(2026, 7, 29, 18, 0, 0); // 2026-08-29T18:00:00Z
+let S = initSession(START);
+let lastAck = null;
+
+const DUR = { // ms an action implies has elapsed before it fires
+  PLAY: 0, PAUSE: 0, SEEK_BACK: 0, SEEK_FWD: 0, RATE_2X: 0, RATE_1X: 0,
+  HIDE: 0, SHOW: 0, PIP_ENTER: 0, PIP_LEAVE: 0, META: 2000, CHANGE_VIDEO: 1000,
+  MEDIA_ENDED: 0, NAV_AWAY: 0, CLOSE_TAB: 0, CRASH: 0, RESTART: 4000,
+  OPEN: 0, OPEN_NETFLIX: 0, OPEN_EMBED: 0, OPEN_GENERIC: 0,
+};
+
+function doAction(type) {
+  advance(S, DUR[type] ?? 0);
+  apply(S, { type });
+  render();
+}
+function doAdvance() {
+  advance(S, 5000);
+  for (const id of S.order) {
+    const v = S.views[id];
+    if (v.open) emit(S, id, "sample", { playing: v._playing, visible: S.tabVisible });
+  }
+  render();
+}
+function doFlush() {
+  const payload = buildFlush(S);
+  lastAck = receiveFlush(S, payload);
+  // mirror: mark closed views as delivered (App told us via flushedClosed already)
+  render(payload);
+}
+function doReset() {
+  uuid._n = 0;
+  S = initSession(START);
+  lastAck = null;
+  scenarioReset();
+  render();
+}
+
+function fmtClock(ms) {
+  return new Date(ms).toISOString().replace(".000Z", "Z");
+}
+
+function render(explicitPayload) {
+  document.getElementById("wallClock").textContent = fmtClock(S.now);
+
+  // state panel
+  const sp = document.getElementById("statePanel");
+  let html = `<div class="kv">
+    <div>tab</div><div>${S.tabVisible ? '<span class="pill on">foreground</span>' : '<span class="pill off">background</span>'} ${S.pip ? '<span class="pill on">PiP</span>' : ''}</div>
+    <div>playback speed</div><div>${S.rate}×</div>
+    <div>active View</div><div>${S.activeViewId ?? '<span class="muted">none</span>'}</div>
+    <div>crashed</div><div>${S.crashed ? '<span class="pill off">yes — Events unobserved</span>' : 'no'}</div>
+  </div>`;
+  if (S.order.length) {
+    html += `<h3>Views</h3>`;
+    for (const id of S.order) {
+      const v = S.views[id];
+      const acked = S.lastFlushAckSeq[id] || 0;
+      const pending = v.events.filter((e) => e.seq > acked).length;
+      html += `<div class="card tight" style="margin:6px 0">
+        <b>${v.viewId}</b> ${v.open ? '<span class="pill on">open</span>' : '<span class="pill off">ended</span>'}
+        ${id === S.activeViewId ? '<span class="pill">active</span>' : ''}<br />
+        <span class="muted">${v.service} · ${v.contentFormat}${v.embedded ? ' · embedded' : ''} · ${v.videoId}</span><br />
+        <span class="muted">title:</span> ${v.title ?? '<span class="muted">null</span>'}
+        &nbsp; <span class="muted">pos:</span> ${round3(v._pos)}s
+        &nbsp; <span class="muted">playing:</span> ${v._playing}<br />
+        <span class="muted">events: ${v.events.length} total, </span>
+        <span class="${pending ? 'changed' : 'muted'}">${pending} awaiting Flush</span>
+        ${v.previousViewId ? `<br /><span class="muted">previousViewId: ${v.previousViewId}</span>` : ''}
+      </div>`;
+    }
+  } else {
+    html += `<p class="muted">No Views yet — open a video.</p>`;
+  }
+  sp.innerHTML = html;
+
+  // payload preview (what WOULD be sent next, unless we just sent one)
+  const payload = explicitPayload || buildFlush(S, true);
+  document.getElementById("payload").textContent = JSON.stringify(payload, null, 2);
+  if (explicitPayload) {
+    document.getElementById("payload").textContent =
+      "// ↓ just POSTed this\n" + JSON.stringify(payload, null, 2);
+  }
+  document.getElementById("ack").textContent = lastAck
+    ? JSON.stringify(lastAck, null, 2)
+    : "— (no Flush sent yet)";
+}
+
+/* ---- scenarios ---- */
+const SCENARIOS = [
+  {
+    name: "A · Happy path",
+    blurb: "Open a YouTube video, watch 15s straight, pause, let it end. Watch one clean Segment's worth of Events accumulate, then a single Flush carry the whole View. This is the baseline every other scenario deviates from.",
+    steps: [
+      ["Open YouTube video", "OPEN"],
+      ["Adapter metadata arrives", "META"],
+      ["Play", "PLAY"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Pause", "PAUSE"],
+      ["Video reaches its end", "MEDIA_ENDED"],
+      ["POST Flush → App", "@FLUSH"],
+    ],
+  },
+  {
+    name: "B · Seek mid-play",
+    blurb: "Play 10s, jump back 30s (before content start, so it clamps to 0), play on. The question: does one seeked event with from/to carry enough for the App to split the Segment and know the vacated range? Ticket #6 consumes this.",
+    steps: [
+      ["Open YouTube video", "OPEN"],
+      ["Play", "PLAY"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Seek forward 60s", "SEEK_FWD"],
+      ["Advance 5s", "@ADV"],
+      ["Seek back 30s", "SEEK_BACK"],
+      ["Advance 5s", "@ADV"],
+      ["POST Flush → App", "@FLUSH"],
+    ],
+  },
+  {
+    name: "C · New video, same tab",
+    blurb: "Watch one video, then the tab navigates to a different video id (YouTube autoplay / clicking the next thumbnail). The first View must close with viewEnded reason video-changed; a fresh View starts with previousViewId pointing back. No videoChange event exists — check that the chain is still legible.",
+    steps: [
+      ["Open YouTube video", "OPEN"],
+      ["Play", "PLAY"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Change video (same tab)", "CHANGE_VIDEO"],
+      ["Play", "PLAY"],
+      ["Advance 5s", "@ADV"],
+      ["POST Flush → App", "@FLUSH"],
+    ],
+  },
+  {
+    name: "D · Background audio",
+    blurb: "Playing, then the tab goes to the background but audio keeps going (a music video you tabbed away from). The Extension emits hidden and keeps sampling with visible:false. It never labels this 'background' — the App does. Confirm the wire carries only raw facts.",
+    steps: [
+      ["Open YouTube video", "OPEN"],
+      ["Adapter metadata arrives", "META"],
+      ["Play", "PLAY"],
+      ["Advance 5s", "@ADV"],
+      ["Tab → background", "HIDE"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Tab → foreground", "SHOW"],
+      ["Advance 5s", "@ADV"],
+      ["POST Flush → App", "@FLUSH"],
+    ],
+  },
+  {
+    name: "E · Crash recovery",
+    blurb: "Playing, then the browser dies with no chance to emit anything. On restart the Extension finds the persisted open View and closes it with viewEnded reason crash-recovered — stamped at the LAST sample, not 'now'. The gap between last sample and the crash is unknowable and must not count.",
+    steps: [
+      ["Open Netflix title", "OPEN_NETFLIX"],
+      ["Play", "PLAY"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Advance 5s", "@ADV"],
+      ["Browser crashes", "CRASH"],
+      ["Extension restarts (recover)", "RESTART"],
+      ["POST Flush → App", "@FLUSH"],
+    ],
+  },
+];
+
+let activeScenario = 0;
+let scenarioStep = 0;
+
+function scenarioReset() {
+  scenarioStep = 0;
+  renderScenario();
+}
+function renderScenarioTabs() {
+  const tabs = document.getElementById("scenarioTabs");
+  tabs.innerHTML = "";
+  SCENARIOS.forEach((sc, i) => {
+    const b = document.createElement("button");
+    b.textContent = sc.name;
+    if (i === activeScenario) b.className = "active";
+    b.onclick = () => { activeScenario = i; scenarioStep = 0; doReset(); renderScenarioTabs(); };
+    tabs.appendChild(b);
+  });
+}
+function renderScenario() {
+  const sc = SCENARIOS[activeScenario];
+  const body = document.getElementById("scenarioBody");
+  let h = `<p class="muted">${sc.blurb}</p>`;
+  sc.steps.forEach((st, i) => {
+    const [label] = st;
+    const cls = i < scenarioStep ? "step done" : i === scenarioStep ? "step next" : "step";
+    h += `<button class="${cls}" data-scstep="${i}" ${i > scenarioStep ? "disabled" : ""}>${i + 1}. ${label}</button>`;
+  });
+  if (scenarioStep >= sc.steps.length) h += `<p class="changed">✓ scenario complete — free-play or reset.</p>`;
+  body.innerHTML = h;
+  body.querySelectorAll("[data-scstep]").forEach((b) => {
+    b.onclick = () => {
+      const i = +b.dataset.scstep;
+      if (i !== scenarioStep) return;
+      const [, act] = SCENARIOS[activeScenario].steps[i];
+      if (act === "@ADV") doAdvance();
+      else if (act === "@FLUSH") doFlush();
+      else doAction(act);
+      scenarioStep += 1;
+      renderScenario();
+    };
+  });
+}
+
+/* ---- wiring ---- */
+document.querySelectorAll("[data-act]").forEach((b) => {
+  b.onclick = () => doAction(b.dataset.act);
+});
+document.getElementById("advance").onclick = doAdvance;
+document.getElementById("flushBtn").onclick = doFlush;
+document.getElementById("resetBtn").onclick = () => { doReset(); };
+
+renderScenarioTabs();
+scenarioReset();
+render();
+</script>
+</body>
+</html>
