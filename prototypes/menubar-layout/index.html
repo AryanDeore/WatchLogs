@@ -3,29 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WatchLogs — Menubar layout prototype (round 3: shrunk calendar + Trends pane)</title>
+<title>WatchLogs — Menubar layout prototype (round 4: collapsible calendar)</title>
 <!--
   PROTOTYPE — throwaway. Answers wayfinder ticket #7 on map #1.
-  Mock data only, no build, no server. Double-click. Switch: bar / arrows / ?variant=G|H|I
+  Mock data only, no build, no server. Double-click. Switch: bar / arrows / ?variant=J|K
+  Deep links also take &pane=history|services|trends and &range=today|week|month
 
-  Round 1 (A/B/C) and round 2 (D/E/F) are in this branch's git history.
-  Decisions carried in from those rounds:
-    - Panes are SEPARATE (History / By Service / Trends / Settings) — different
-      grains of information, tabbed not stacked.
-    - Calendar is NOT the hero. It shrinks to a compact week strip pinned on
-      top as the entry point; a month grid drops down only for Custom.
-    - Per-day overview (magnitude + Service mix) lives in a new TRENDS pane:
-      one stacked bar per day across the selected range.
-    - Service summary strip under the range control (from F), now with icons.
-    - By Service bars are part-to-whole: track = 100% of watched time in range,
-      fill = that Service's share; the needs-an-Adapter bucket is in the total.
-    - History's per-video bar = how much of that video you've watched (coverage);
-      blank for live / unknown duration.
+  Rounds 1-3 (A/B/C, D/E/F, G/H/I) are in this branch's git history.
 
-  What G / H / I disagree about:
-    G  week strip on top · 4 tabs incl. Settings · Trends = vertical columns
-    H  range dropdown only (most compact top) · Settings = gear · Trends = horizontal bars
-    I  week strip on top · 4 tabs · lands on TRENDS by default · vertical columns
+  Round 4 applies:
+    - Trends orientation follows span: <=14 days horizontal, >14 vertical.
+    - Settings is a top-right gear on the title row, not a pane / not a tab.
+    - Calendar defaults to a collapsed week row; a toggle expands it in place to
+      the full month. Picking This Month / Custom expands it; Today / This Week
+      collapse it. No dropdown layer.
+    - No "counting" markers. No watch-time underline on calendar days. No footer.
+    - Summary strip = top 3 domains, icons only, no label.
+
+  J and K differ only in where the presets live:
+    J  preset chips in a row above the calendar
+    K  presets built into the calendar's own header
 -->
 <style>
   :root {
@@ -34,9 +31,10 @@
     --panel: #f7f8fa; --panel-2: #eef0f4; --card: #ffffff;
     --line: #e2e5ea; --line-2: #d3d7de;
     --accent: #3b6ef5; --accent-soft: #e8effe;
-    --yt: #ff0033; --nflx: #e50914; --twitch: #9146ff; --other: #98a0ad;
+    /* viz palette — departs from brand so stacked bars stay legible
+       (YouTube and Netflix are both red in reality) */
+    --yt: #e5342b; --nflx: #e0902f; --twitch: #7a5cff; --other: #9aa1ad;
     --good: #128a5b; --warn: #a8630b; --warn-soft: #fbeedd;
-    --prov: #7a4fd0; --prov-soft: #efe8fb;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   }
@@ -47,8 +45,6 @@
     background: linear-gradient(150deg, var(--wall-1), var(--wall-2) 55%, var(--wall-3));
     background-attachment: fixed; -webkit-font-smoothing: antialiased;
   }
-
-  /* faux macOS menubar + desktop */
   .menubar {
     position: fixed; inset: 0 0 auto 0; height: 26px; z-index: 50;
     background: rgba(255,255,255,.62); backdrop-filter: saturate(180%) blur(18px);
@@ -68,93 +64,70 @@
     position: relative; z-index: 1; background: var(--card); border-radius: 12px;
     box-shadow: 0 18px 60px rgba(10,12,30,.42), 0 2px 8px rgba(10,12,30,.28);
     overflow: hidden; display: flex; flex-direction: column; color: var(--ink);
+    width: 380px; height: 560px;
   }
-  .variant-G .popover { width: 380px; height: 560px; }
-  .variant-H .popover { width: 380px; height: 560px; }
-  .variant-I .popover { width: 380px; height: 560px; }
-  .readout { position: absolute; left: 0; right: 0; bottom: -30px; font: 11px/1.4 var(--mono); color: rgba(255,255,255,.85); text-align: center; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  .readout { position: absolute; left: 0; right: 0; bottom: -26px; font: 10.5px/1.4 var(--mono); color: rgba(255,255,255,.7); text-align: center; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
 
-  /* ---------- top: range control ---------- */
-  .top { border-bottom: 1px solid var(--line); }
-  .top-id { display: flex; align-items: center; gap: 8px; padding: 9px 12px 0; }
-  .top-id .n { font-weight: 700; font-size: 12.5px; }
-  .top-id .n .dot { color: var(--accent); }
-  .top-id .tot { font: 11px var(--mono); color: var(--ink-dim); }
-  .top-id .tot.prov { color: var(--prov); }
-  .top-id .sp { margin-left: auto; }
+  /* ---- title row ---- */
+  .hdrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .hdrow .app { font-weight: 700; font-size: 13px; }
+  .hdrow .app .dot { color: var(--accent); }
+  .hdrow .tot { font: 11px var(--mono); color: var(--ink-dim); margin-left: auto; }
+  .hdrow .gear { border: 1px solid var(--line-2); background: var(--card); color: var(--ink-dim); width: 26px; height: 26px; border-radius: 7px; cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  .hdrow .gear:hover { color: var(--ink); border-color: var(--ink-faint); }
 
-  .chips { display: flex; gap: 4px; padding: 8px 12px; }
+  /* ---- preset chips ---- */
+  .chips { display: flex; gap: 4px; }
   .chips button { flex: 1; font: 11.5px var(--sans); padding: 5px 0; border: 1px solid var(--line-2); background: var(--card); border-radius: 7px; cursor: pointer; color: var(--ink-dim); }
   .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .chips-row { padding: 9px 12px 0; }
 
-  /* compact week strip */
-  .wk { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; padding: 0 12px 8px; }
-  .wk-cell { position: relative; text-align: center; padding: 3px 0 8px; border-radius: 6px; cursor: pointer; user-select: none; }
-  .wk-cell:hover { background: var(--panel-2); }
-  .wk-cell.inrange { background: var(--accent-soft); border-radius: 0; }
-  .wk-cell.r-start { border-radius: 6px 0 0 6px; }
-  .wk-cell.r-end { border-radius: 0 6px 6px 0; }
-  .wk-cell .dow { font: 8.5px var(--sans); color: var(--ink-faint); text-transform: uppercase; letter-spacing: .04em; }
-  .wk-cell .dnum { font: 11px var(--mono); display: inline-block; width: 18px; line-height: 16px; margin-top: 1px; }
-  .wk-cell.today .dnum { background: var(--accent); color: #fff; border-radius: 50%; }
-  .wk-cell.today.prov .dnum { background: var(--prov); }
-  .wk-cell.fut { color: var(--ink-faint); }
-  .wk-bar { position: absolute; left: 50%; transform: translateX(-50%); bottom: 3px; height: 3px; border-radius: 2px; background: var(--ink-faint); }
-  .wk-bar.prov { background: repeating-linear-gradient(90deg, var(--prov) 0 2px, transparent 2px 4px); }
-  .wk-note { padding: 0 12px 8px; font: 10.5px var(--mono); color: var(--ink-faint); display: flex; justify-content: space-between; }
+  /* ---- calendar box ---- */
+  .calbox { padding: 9px 12px 10px; border-bottom: 1px solid var(--line); }
+  .calbox.k { padding-top: 9px; }
+  .calbox.k .chips { margin-bottom: 8px; }
+  .cal-sub { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font: 11.5px var(--sans); color: var(--ink-dim); }
+  .cal-sub .mlabel { font-weight: 650; color: var(--ink); }
+  .cal-sub .mnav { border: 0; background: transparent; cursor: pointer; color: var(--ink-dim); font-size: 13px; padding: 0 4px; }
+  .cal-sub .tog { margin-left: auto; border: 1px solid var(--line-2); background: var(--card); border-radius: 6px; cursor: pointer; color: var(--ink-dim); font-size: 10px; padding: 2px 7px; }
+  .cal-sub .tog:hover { color: var(--ink); }
 
-  /* range dropdown (variant H) */
-  .rng-dd { position: relative; padding: 8px 12px; }
-  .rng-dd > button { width: 100%; text-align: left; border: 1px solid var(--line-2); background: var(--card); border-radius: 8px; padding: 8px 10px; cursor: pointer; font: 12px var(--sans); display: flex; align-items: center; }
-  .rng-dd > button .lbl { font-weight: 600; }
-  .rng-dd > button .rv { font: 11px var(--mono); color: var(--ink-dim); margin-left: 8px; }
-  .rng-dd > button .car { margin-left: auto; color: var(--ink-faint); }
-  .rng-panel { position: absolute; left: 12px; right: 12px; top: 46px; z-index: 30; background: var(--card); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 12px 34px rgba(10,12,30,.3); padding: 8px; }
-  .rng-panel .pre { display: flex; gap: 4px; margin-bottom: 8px; }
-  .rng-panel .pre button { flex: 1; font: 11px var(--sans); padding: 5px 0; border: 1px solid var(--line-2); background: var(--card); border-radius: 6px; cursor: pointer; color: var(--ink-dim); }
-  .rng-panel .pre button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .grid7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+  .grid7 .dow { font: 8.5px var(--sans); color: var(--ink-faint); text-align: center; padding: 1px 0 3px; text-transform: uppercase; letter-spacing: .03em; }
+  .cell { text-align: center; padding: 5px 0; border-radius: 6px; cursor: pointer; user-select: none; font: 11px var(--mono); }
+  .cell.mut { color: var(--ink-faint); }
+  .cell.oob { visibility: hidden; pointer-events: none; }
+  .cell:hover { background: var(--panel-2); }
+  .cell.inrange { background: var(--accent-soft); border-radius: 0; }
+  .cell.r-start { border-radius: 6px 0 0 6px; }
+  .cell.r-end { border-radius: 0 6px 6px 0; }
+  .cell .n { display: inline-block; width: 18px; line-height: 16px; }
+  .cell.today .n { background: var(--accent); color: #fff; border-radius: 50%; }
+  .cell.fut { color: var(--ink-faint); }
+  .wk-dow { text-align: center; font: 8.5px var(--sans); color: var(--ink-faint); text-transform: uppercase; padding-bottom: 2px; }
 
-  /* shared month grid (Custom) */
-  .cal { background: var(--card); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px; }
-  .cal.float { position: absolute; z-index: 30; box-shadow: 0 12px 34px rgba(10,12,30,.3); width: 244px; }
-  .cal-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
-  .cal-hd .m { font-weight: 650; font-size: 12px; }
-  .cal-hd button { border: 0; background: transparent; cursor: pointer; color: var(--ink-dim); font-size: 13px; padding: 2px 6px; }
-  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-  .cal-grid .dow { font: 9px var(--sans); color: var(--ink-faint); text-align: center; padding: 2px 0; text-transform: uppercase; }
-  .cal-grid .cell { font: 11px var(--mono); text-align: center; padding: 5px 0; border-radius: 5px; cursor: pointer; user-select: none; }
-  .cal-grid .cell.mut { color: var(--ink-faint); }
-  .cal-grid .cell:hover { background: var(--panel-2); }
-  .cal-grid .cell.in { background: var(--accent-soft); border-radius: 0; }
-  .cal-grid .cell.end { background: var(--accent); color: #fff; border-radius: 5px; }
-  .cal-foot { margin-top: 7px; display: flex; justify-content: space-between; align-items: center; font: 11px var(--sans); color: var(--ink-dim); }
-  .cal-foot button { font: 11px var(--sans); border: 1px solid var(--line-2); background: var(--card); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
-
-  /* ---------- service summary strip (icons) ---------- */
+  /* ---- summary strip ---- */
   .svc-strip {
-    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
-    padding: 7px 12px; border: 0; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+    padding: 8px 12px; border: 0; border-bottom: 1px solid var(--line);
     background: var(--panel); cursor: pointer; font: 11px var(--mono); color: var(--ink-dim);
-    overflow-x: auto; white-space: nowrap;
+    white-space: nowrap;
   }
   .svc-strip .it { display: inline-flex; align-items: center; gap: 5px; }
   .svc-strip .ic { width: 15px; height: 15px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: #fff; font: 700 9px var(--sans); }
-  .svc-strip .more { margin-left: auto; color: var(--ink-faint); }
+  .svc-strip .chev { margin-left: auto; color: var(--ink-faint); }
 
-  /* ---------- tabs ---------- */
-  .tabs { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--line); }
-  .tabs .seg { display: flex; flex: 1; background: var(--panel-2); border-radius: 8px; padding: 2px; gap: 2px; }
+  /* ---- tabs ---- */
+  .tabs { padding: 7px 12px; border-bottom: 1px solid var(--line); }
+  .tabs .seg { display: flex; background: var(--panel-2); border-radius: 8px; padding: 2px; gap: 2px; }
   .tabs .seg button { flex: 1; font: 11.5px var(--sans); border: 0; background: transparent; color: var(--ink-dim); padding: 4px 0; border-radius: 6px; cursor: pointer; }
   .tabs .seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
-  .icon-btn { border: 1px solid var(--line-2); background: var(--card); color: var(--ink-dim); width: 27px; height: 27px; border-radius: 7px; cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: none; }
-  .icon-btn:hover { color: var(--ink); border-color: var(--ink-faint); }
 
   .body { flex: 1; overflow: auto; }
   .body::-webkit-scrollbar { width: 9px; }
   .body::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 9px; border: 2px solid var(--card); }
-  .foot { border-top: 1px solid var(--line); padding: 6px 12px; font: 10.5px/1.4 var(--mono); color: var(--ink-faint); display: flex; justify-content: space-between; gap: 8px; }
 
-  /* ---------- History ---------- */
+  /* ---- History ---- */
   .pane-note { padding: 8px 14px 4px; font-size: 11px; color: var(--ink-faint); }
   .day { border-bottom: 1px solid var(--line); }
   .day-hd { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 14px; background: transparent; border: 0; cursor: pointer; font: inherit; text-align: left; color: var(--ink); }
@@ -165,8 +138,6 @@
   .day-hd .d-date { color: var(--ink-faint); font-size: 11.5px; }
   .day-hd .d-total { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
   .day-hd .d-span { display: block; font-size: 10.5px; color: var(--ink-faint); font-family: var(--mono); margin-top: 1px; }
-  .prov-pill { font: 10px var(--sans); font-weight: 600; color: var(--prov); background: var(--prov-soft); border-radius: 999px; padding: 1px 7px; }
-  .day-hd .d-total.prov { color: var(--prov); font-style: italic; }
   .views { padding: 2px 0 6px; }
   .view { display: grid; grid-template-columns: 14px 1fr auto; gap: 9px; padding: 6px 14px; align-items: start; }
   .view:hover { background: var(--panel); }
@@ -177,14 +148,14 @@
   .tag { font: 10px var(--mono); padding: 0 5px; border-radius: 4px; background: var(--panel-2); color: var(--ink-dim); }
   .tag.fmt { background: #e9eefb; color: #2c4c9c; }
   .tag.emb { background: var(--warn-soft); color: var(--warn); }
-  .tag.live { background: #fde8ec; color: var(--yt); }
+  .tag.live { background: #fdece8; color: var(--yt); }
   .view .v-time { font-family: var(--mono); font-size: 11.5px; color: var(--ink); text-align: right; white-space: nowrap; }
   .cov { grid-column: 2 / 4; height: 3px; border-radius: 3px; background: var(--panel-2); margin-top: 5px; overflow: hidden; }
   .cov > i { display: block; height: 100%; background: var(--accent); opacity: .55; }
   .cov-live { grid-column: 2 / 4; margin-top: 4px; font: 10px var(--mono); color: var(--ink-faint); }
   .more-row { padding: 8px 14px; font-size: 11.5px; color: var(--ink-faint); font-style: italic; }
 
-  /* ---------- By Service ---------- */
+  /* ---- By Service ---- */
   .svc-scope { padding: 10px 14px 4px; font-size: 11.5px; color: var(--ink-dim); }
   .svc-scope b { color: var(--ink); font-weight: 600; }
   .svc { padding: 9px 14px; border-bottom: 1px solid var(--line); }
@@ -209,35 +180,30 @@
   .adapter-hd::before { content: "⚠"; }
   .adapter-sub { padding: 0 14px 4px; font-size: 11px; color: var(--ink-dim); }
 
-  /* ---------- Trends ---------- */
-  .tr-wrap { padding: 12px 14px 8px; }
+  /* ---- Trends ---- */
+  .tr-wrap { padding: 12px 14px 10px; }
   .tr-scope { font-size: 11.5px; color: var(--ink-dim); margin-bottom: 10px; }
   .tr-scope b { color: var(--ink); }
   .tr-legend { display: flex; gap: 12px; flex-wrap: wrap; font: 10.5px var(--sans); color: var(--ink-dim); margin-top: 10px; }
-  .tr-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: 0; }
+  .tr-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 4px; }
   .tr-hint { font: 10.5px var(--sans); color: var(--ink-faint); margin-top: 8px; }
-
-  /* vertical columns (G / I) */
-  .tr-cols { display: flex; align-items: flex-end; gap: 4px; height: 150px; border-bottom: 1px solid var(--line-2); padding-bottom: 0; }
-  .tr-cols.month { gap: 2px; }
-  .tr-col { flex: 1; display: flex; flex-direction: column-reverse; min-width: 0; position: relative; }
+  .tr-ymax { font: 9.5px var(--mono); color: var(--ink-faint); margin-bottom: 3px; }
+  .tr-cols { display: flex; align-items: flex-end; gap: 4px; height: 150px; border-bottom: 1px solid var(--line-2); }
+  .tr-cols.dense { gap: 2px; }
+  .tr-col { flex: 1; display: flex; flex-direction: column-reverse; min-width: 0; }
   .tr-col .seg { width: 100%; }
-  .tr-col .cap { position: absolute; top: -12px; left: 0; right: 0; height: 4px; background: repeating-linear-gradient(90deg, var(--prov) 0 2px, transparent 2px 4px); }
   .tr-xax { display: flex; gap: 4px; margin-top: 4px; }
-  .tr-xax.month { gap: 2px; }
+  .tr-xax.dense { gap: 2px; }
   .tr-xax span { flex: 1; text-align: center; font: 9px var(--mono); color: var(--ink-faint); overflow: hidden; }
-  .tr-ymax { font: 9.5px var(--mono); color: var(--ink-faint); margin-bottom: 2px; }
-
-  /* horizontal bars (H) */
   .tr-rows { display: grid; gap: 6px; }
-  .tr-row { display: grid; grid-template-columns: 46px 1fr 52px; gap: 8px; align-items: center; }
+  .tr-row { display: grid; grid-template-columns: 52px 1fr 52px; gap: 8px; align-items: center; }
   .tr-row .rl { font: 10px var(--mono); color: var(--ink-faint); text-align: right; }
-  .tr-row .rt { height: 14px; border-radius: 4px; background: var(--panel-2); overflow: hidden; display: flex; }
+  .tr-row .rt { height: 15px; border-radius: 4px; background: var(--panel-2); overflow: hidden; display: flex; }
   .tr-row .rt > i { height: 100%; display: block; }
   .tr-row .rv { font: 10px var(--mono); color: var(--ink-dim); }
   .tr-row.zero .rt { background: repeating-linear-gradient(45deg, var(--panel-2) 0 4px, var(--card) 4px 8px); }
 
-  /* ---------- Settings ---------- */
+  /* ---- Settings overlay ---- */
   .set { padding: 12px 14px; display: grid; gap: 14px; }
   .field { display: grid; gap: 4px; }
   .field label { font-weight: 600; font-size: 12px; }
@@ -254,17 +220,11 @@
   .step-row { display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; }
   .step-row button { border: 0; background: var(--card); padding: 5px 10px; cursor: pointer; font: 13px var(--mono); }
   .step-row .val { padding: 5px 12px; font: 12px var(--mono); border-left: 1px solid var(--line-2); border-right: 1px solid var(--line-2); }
-
-  .cat-stub { margin: 12px 14px; padding: 16px; border: 1.5px dashed var(--line-2); border-radius: 10px; text-align: center; color: var(--ink-faint); }
-  .cat-stub .soon { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--accent); }
-
-  /* settings slide-over (H) */
   .slideover { position: absolute; inset: 0; background: var(--card); z-index: 40; display: flex; flex-direction: column; transform: translateX(100%); transition: transform .18s ease; }
   .slideover.open { transform: translateX(0); }
   .slideover .so-hd { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; }
   .slideover .so-hd button { border: 0; background: transparent; font-size: 15px; cursor: pointer; color: var(--ink-dim); }
 
-  /* floating switcher (NOT part of the design) */
   #switcher { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 999; display: flex; align-items: center; gap: 2px; background: #0f1220; color: #fff; border-radius: 999px; padding: 5px 6px; box-shadow: 0 10px 40px rgba(0,0,0,.5); font: 12px var(--sans); }
   #switcher button { border: 0; background: transparent; color: #fff; cursor: pointer; font-size: 15px; width: 30px; height: 28px; border-radius: 999px; }
   #switcher button:hover { background: rgba(255,255,255,.14); }
@@ -281,14 +241,13 @@
 </div>
 <div class="desk"><div class="anchor"><div class="beak"></div><div id="stage"></div><div class="readout" id="readout"></div></div></div>
 <div id="switcher"></div>
-<div class="hint-note">← / → to switch layouts &nbsp;·&nbsp; ?variant=G|H|I</div>
+<div class="hint-note">← / → to switch layouts &nbsp;·&nbsp; ?variant=J|K</div>
 
 <script>
 /* ============================================================================
-   MOCK DATA — one source of truth so History, By Service and Trends reconcile
+   MOCK DATA — one source of truth (DAILY minutes by Service)
    ========================================================================== */
-
-const NOW = { y: 2026, m: 7, d: 29 };          // Fri Aug 29 2026 (m 0-indexed)
+const NOW = { y: 2026, m: 7, d: 29 };
 const SVC = {
   youtube: { name: "YouTube", mono: "Y", color: "var(--yt)" },
   netflix: { name: "Netflix", mono: "N", color: "var(--nflx)" },
@@ -296,51 +255,51 @@ const SVC = {
   other:   { name: "Other sites", mono: "•", color: "var(--other)" },
 };
 const SVC_ORDER = ["youtube", "netflix", "twitch", "other"];
+const WD  = { 25: "M", 26: "T", 27: "W", 28: "T", 29: "F", 30: "S", 31: "S" };
+const WDL = { 25: "Mon", 26: "Tue", 27: "Wed", 28: "Thu", 29: "Fri", 30: "Sat", 31: "Sun" };
 
-// per-day watched minutes by Service. The ONLY watch-time source; everything sums from here.
 const DAILY = {
+  4:  { youtube: 55, netflix: 20 },
+  5:  { twitch: 90 },
+  8:  { youtube: 35, other: 15 },
+  9:  { netflix: 120 },
   12: { youtube: 40 },
   13: { netflix: 95 },
   18: { youtube: 30, twitch: 20 },
   19: { netflix: 60, other: 15 },
   20: { youtube: 55 },
   22: { twitch: 110 },
-  25: { youtube: 182, netflix: 166, other: 40 },          // Mon — coding bg + Dune + a lecture
-  26: {},                                                  // Tue — quiet
-  27: { twitch: 72 },                                      // Wed
-  28: { youtube: 95, netflix: 90, other: 27 },             // Thu
-  29: { youtube: 100, netflix: 25, prov: true },           // Fri — today, still open
+  25: { youtube: 182, netflix: 166, other: 40 },
+  26: {},
+  27: { twitch: 72 },
+  28: { youtube: 95, netflix: 90, other: 27 },
+  29: { youtube: 100, netflix: 25 },
 };
 
 const RANGES = {
-  today: { label: "Today",      days: [29, 29], sub: "open day · provisional" },
-  week:  { label: "This Week",  days: [25, 29], sub: "Mon–today" },
-  month: { label: "This Month", days: [1, 29],  sub: "1st–today" },
-  custom:{ label: "Custom",     days: null,     sub: "pick days on the grid" },
+  today: { label: "Today",      days: [29, 29] },
+  week:  { label: "This Week",  days: [25, 29] },
+  month: { label: "This Month", days: [1, 29] },
+  custom:{ label: "Custom",     days: null },
 };
-// mock week: Aug 25 is "Monday" (the whole prototype's clock is fictional)
-const WD  = { 25: "M", 26: "T", 27: "W", 28: "T", 29: "F", 30: "S", 31: "S" };
-const WDL = { 25: "Mon", 26: "Tue", 27: "Wed", 28: "Thu", 29: "Fri", 30: "Sat", 31: "Sun" };
 
-// History Views (event-log grain). `cov` = fraction of the video's own timeline
-// watched at least once; null when live / duration unknown.
 const HISTORY = [
-  { id: "today", dom: 29, name: "Today", date: null, provisional: true, span: "started 6:12 PM · still open",
+  { id: "today", dom: 29, name: "Today", date: null, span: "started 6:12 PM · still open",
     views: [
       { svc: "youtube", title: "The Untold History of the Spreadsheet", author: "Veritasium", fmt: "standard", embedded: false, watched: "48m", cov: 0.72, at: "7:20 PM" },
       { svc: "youtube", title: "lofi hip hop radio — beats to relax/study to", author: "Lofi Girl", fmt: "live", embedded: false, watched: "52m", cov: null, at: "8:30 PM" },
       { svc: "netflix", title: "The Diplomat — S2:E4 “Keep Your Enemies Closer”", author: "Netflix", fmt: "standard", embedded: false, watched: "25m", cov: 0.40, at: "9:14 PM" },
     ] },
-  { id: "d-thu", dom: 28, name: "Thursday", date: "Aug 28", provisional: false, span: "7:02 PM → 11:48 PM",
+  { id: "d-thu", dom: 28, name: "Thursday", date: "Aug 28", span: "7:02 PM → 11:48 PM",
     views: [
       { svc: "youtube", title: "How the ILC-2 landed 6 boosters in one night", author: "Scott Manley", fmt: "standard", embedded: false, watched: "1h 04m", cov: 0.98, at: "7:02 PM" },
       { svc: "youtube", title: "#Shorts — the one-pan trick", author: "Adam Ragusea", fmt: "short", embedded: false, watched: "3m", cov: 1.0, at: "8:11 PM" },
       { svc: "other", title: "Type design lecture 04 (embedded on typo.blog)", author: "typo.blog", fmt: "standard", embedded: true, watched: "27m", cov: 0.35, at: "8:30 PM" },
       { svc: "netflix", title: "Killing Eve — S1:E1", author: "Netflix", fmt: "standard", embedded: false, watched: "1h 30m", cov: 1.0, at: "9:40 PM" },
     ] },
-  { id: "d-wed", dom: 27, name: "Wednesday", date: "Aug 27", provisional: false, span: "9:40 PM → 10:52 PM",
+  { id: "d-wed", dom: 27, name: "Wednesday", date: "Aug 27", span: "9:40 PM → 10:52 PM",
     views: [ { svc: "twitch", title: "summit1g — just chatting / DayZ", author: "summit1g", fmt: "live", embedded: false, watched: "1h 12m", cov: null, at: "9:40 PM" } ] },
-  { id: "d-mon", dom: 25, name: "Monday", date: "Aug 25", provisional: false, span: "9:04 AM → 3:12 AM (+1d)", pastMidnight: true,
+  { id: "d-mon", dom: 25, name: "Monday", date: "Aug 25", span: "9:04 AM → 3:12 AM (+1d)", pastMidnight: true,
     views: [
       { svc: "youtube", title: "Deep work playlist (background while coding)", author: "various", fmt: "standard", embedded: false, watched: "2h 22m", cov: 0.9, at: "9:04 AM" },
       { svc: "netflix", title: "Dune: Part Two", author: "Netflix", fmt: "standard", embedded: false, watched: "2h 46m", cov: 1.0, at: "11:20 PM" },
@@ -348,22 +307,17 @@ const HISTORY = [
     ] },
 ];
 
-// YouTube contentFormat split — fractions of YouTube's own total in range
 const YT_SPLIT = [ { label: "standard", frac: 0.66 }, { label: "short", frac: 0.28 }, { label: "live", frac: 0.06 } ];
 const YT_EMBEDDED_FRAC = 0.05;
-
-// "Other sites" — the needs-an-Adapter bucket, part of the whole
 const NEEDS_ADAPTER = [
   { name: "typo.blog", minsShare: 0.60, note: "generic extraction · title only, no video id" },
   { name: "ocw.mit.edu", minsShare: 0.40, note: "generic extraction · no author" },
 ];
-
 const SETTINGS = { token: "wl_9f2a17b4…c71d", port: 47600, retentionDays: 90, launchAtLogin: true, dayEndsAround: "04:00", version: "0.1.0 · contract v1" };
 
 /* ============================================================================
    DERIVATIONS
    ========================================================================== */
-
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmtMins = (m) => { m = Math.round(m); return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`; };
@@ -377,8 +331,7 @@ function rangeDays() {
   return RANGES[state.range].days;
 }
 function dayTotal(d) { return SVC_ORDER.reduce((a, k) => a + ((DAILY[d] && DAILY[d][k]) || 0), 0); }
-function dayIsProv(d) { return !!(DAILY[d] && DAILY[d].prov); }
-function rangeDayList() { const [a, b] = rangeDays(); const out = []; for (let d = a; d <= b; d++) out.push(d); return out; }
+function rangeDayList() { const [a, b] = rangeDays(); const o = []; for (let d = a; d <= b; d++) o.push(d); return o; }
 function svcTotals() {
   const t = { youtube: 0, netflix: 0, twitch: 0, other: 0 };
   for (const d of rangeDayList()) for (const k of SVC_ORDER) t[k] += (DAILY[d] && DAILY[d][k]) || 0;
@@ -387,127 +340,105 @@ function svcTotals() {
 function grandTotal() { const t = svcTotals(); return SVC_ORDER.reduce((a, k) => a + t[k], 0); }
 function rangeResolved() {
   const [a, b] = rangeDays();
-  if (a > b) return "—";
+  if (a > b) return "pick days";
   const f = (dd) => new Date(2026, 7, dd).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   return a === b ? f(a) : `${f(a)} – ${f(b)}`;
 }
-function isProvRange() { return rangeDayList().some(dayIsProv); }
 
 /* ============================================================================
    STATE
    ========================================================================== */
 const state = {
-  variant: "G", range: "week",
-  pane: "history",           // history | services | trends | settings
+  variant: "J", range: "week",
+  pane: "history",           // history | services | trends
   collapsed: { "d-mon": true },
   ytExpanded: true,
+  calOpen: false,            // false = week row, true = full month
   calMonth: 7, calYear: 2026,
   customStart: null, customEnd: null,
-  ddOpen: false,             // H range dropdown
-  computing: false,
-  soOpen: false,             // H settings slide-over
+  settingsOpen: false,
 };
 
 /* ============================================================================
-   SHARED WIDGETS
+   WIDGETS
    ========================================================================== */
-
-function chips() {
+function presetChips() {
   return `<div class="chips">${["today", "week", "month", "custom"].map((k) =>
     `<button data-range="${k}" class="${state.range === k ? "on" : ""}">${RANGES[k].label}</button>`).join("")}</div>`;
 }
 
-function weekStrip() {
+function calGrid() {
   const [rs, re] = rangeDays();
-  const dows = ["M", "T", "W", "T", "F", "S", "S"];
-  const week = [25, 26, 27, 28, 29, 30, 31];
-  const maxT = Math.max(...week.map(dayTotal), 1);
-  const cells = week.map((d, i) => {
-    const tot = dayTotal(d);
-    const isToday = d === NOW.d, fut = d > NOW.d, inR = d >= rs && d <= re;
-    let cls = "wk-cell";
-    if (fut) cls += " fut";
-    if (inR) cls += " inrange";
-    if (d === rs) cls += " r-start";
-    if (d === re) cls += " r-end";
-    if (isToday) cls += " today" + (dayIsProv(d) ? " prov" : "");
-    const bar = tot > 0 ? `<span class="wk-bar ${dayIsProv(d) ? "prov" : ""}" style="width:${Math.max(6, Math.round(tot / maxT * 22))}px"></span>` : "";
-    return `<div class="${cls}" data-day="${d}"><span class="dow">${dows[i]}</span><br><span class="dnum">${d}</span>${bar}</div>`;
-  }).join("");
-  return `<div class="wk">${cells}</div>
-    <div class="wk-note"><span>${RANGES[state.range].label} · ${esc(rangeResolved())}</span><span>underline = watch time</span></div>
-    ${state.range === "custom" ? floatCal("left:12px;right:12px;top:calc(100% - 4px);position:absolute") : ""}`;
-}
+  const tog = `<button class="tog" data-cal-toggle>${state.calOpen ? "collapse ▴" : "expand ▾"}</button>`;
 
-function floatCal(style) {
+  if (!state.calOpen) {
+    // collapsed: the week that contains "today" (Aug 25–31)
+    const week = [25, 26, 27, 28, 29, 30, 31];
+    const cells = week.map((d) => {
+      const isToday = d === NOW.d, fut = d > NOW.d, inR = d >= rs && d <= re;
+      let cls = "cell";
+      if (fut) cls += " fut";
+      if (inR) cls += " inrange";
+      if (d === rs) cls += " r-start";
+      if (d === re) cls += " r-end";
+      if (isToday) cls += " today";
+      return `<div class="${cls}" data-day="${d}"><div class="wk-dow">${WD[d]}</div><span class="n">${d}</span></div>`;
+    }).join("");
+    return `<div class="cal-sub"><span class="mlabel">${esc(rangeResolved())}</span>${tog}</div>
+      <div class="grid7">${cells}</div>`;
+  }
+
+  // expanded: full month grid for calMonth/calYear
   const first = new Date(state.calYear, state.calMonth, 1);
   const dim = new Date(state.calYear, state.calMonth + 1, 0).getDate();
-  const lead = (first.getDay() + 6) % 7;
+  const lead = (first.getDay() + 6) % 7; // Monday first
   const mName = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const dows = ["M", "T", "W", "T", "F", "S", "S"].map((x) => `<div class="dow">${x}</div>`).join("");
-  const s = state.customStart, e = state.customEnd;
+  const isAug = state.calMonth === 7 && state.calYear === 2026;
   let cells = "";
-  for (let i = 0; i < lead; i++) cells += `<div class="cell mut"></div>`;
+  for (let i = 0; i < lead; i++) cells += `<div class="cell oob"></div>`;
   for (let d = 1; d <= dim; d++) {
-    const dt = new Date(state.calYear, state.calMonth, d);
-    let c = "cell";
-    if (s && e && dt >= s && dt <= e) c += " in";
-    if ((s && +dt === +s) || (e && +dt === +e)) c += " end";
-    cells += `<div class="${c}" data-day="${d}">${d}</div>`;
+    const isToday = isAug && d === NOW.d;
+    const inR = isAug && d >= rs && d <= re;
+    let cls = "cell";
+    if (isAug && d > NOW.d) cls += " mut";
+    if (inR) cls += " inrange";
+    if (inR && d === rs) cls += " r-start";
+    if (inR && d === re) cls += " r-end";
+    if (isToday) cls += " today";
+    cells += `<div class="${cls}" data-day="${d}"><span class="n">${d}</span></div>`;
   }
-  return `<div class="cal float" style="${style}">
-    <div class="cal-hd"><button data-cal="prev">‹</button><span class="m">${mName}</span><button data-cal="next">›</button></div>
-    <div class="cal-grid">${dows}${cells}</div>
-    <div class="cal-foot"><span>${s && e ? "range set" : s ? "pick end day" : "pick start day"}</span><button data-cal="apply">Done</button></div>
-  </div>`;
-}
-
-function rangeDropdown() {
-  return `<div class="rng-dd">
-    <button data-dd-toggle>
-      <span class="lbl">${RANGES[state.range].label}</span>
-      <span class="rv">${esc(rangeResolved())} · ${fmtMins(grandTotal())}${isProvRange() ? " · counting" : ""}</span>
-      <span class="car">▾</span>
-    </button>
-    ${state.ddOpen ? `<div class="rng-panel">
-      <div class="pre">${["today", "week", "month", "custom"].map((k) =>
-        `<button data-range="${k}" class="${state.range === k ? "on" : ""}">${RANGES[k].label}</button>`).join("")}</div>
-      ${floatCal("position:static;width:auto")}
-    </div>` : ""}
-  </div>`;
+  return `<div class="cal-sub">
+      <button class="mnav" data-cal="prev">‹</button><span class="mlabel">${mName}</span><button class="mnav" data-cal="next">›</button>
+      ${tog}
+    </div>
+    <div class="grid7">${dows}${cells}</div>`;
 }
 
 function serviceStrip() {
   const t = svcTotals();
-  const items = SVC_ORDER.filter((k) => t[k] > 0).map((k) =>
+  const top3 = SVC_ORDER.filter((k) => t[k] > 0).sort((a, b) => t[b] - t[a]).slice(0, 3);
+  const items = top3.map((k) =>
     `<span class="it"><span class="ic" style="background:${SVC[k].color}">${SVC[k].mono}</span>${fmtMins(t[k])}</span>`).join("");
-  return `<button class="svc-strip" data-pane="services">${items || '<span class="it">no watch time in range</span>'}<span class="more">By Service ▸</span></button>`;
+  return `<button class="svc-strip" data-pane="services">${items || '<span class="it">no watch time in range</span>'}<span class="chev">›</span></button>`;
 }
 
-function topId() {
-  const prov = isProvRange();
-  return `<div class="top-id">
-    <span class="n">Watch<span class="dot">·</span>Logs</span>
-    <span class="tot ${prov ? "prov" : ""}">${RANGES[state.range].label} · ${fmtMins(grandTotal())}${prov ? " · counting" : ""}</span>
-    ${state.computing ? '<span class="sp">◐</span>' : ""}
+function titleRow() {
+  return `<div class="hdrow">
+    <span class="app">Watch<span class="dot">·</span>Logs</span>
+    <span class="tot">${RANGES[state.range].label} · ${fmtMins(grandTotal())}</span>
+    <button class="gear" data-settings-open title="Settings">⚙</button>
   </div>`;
 }
 
-function tabRow(withSettingsTab) {
+function tabRow() {
   const tab = (k, label) => `<button data-pane="${k}" class="${state.pane === k ? "on" : ""}">${label}</button>`;
-  return `<div class="tabs">
-    <div class="seg">
-      ${tab("history", "History")}${tab("services", "By Service")}${tab("trends", "Trends")}
-      ${withSettingsTab ? tab("settings", "⚙") : ""}
-    </div>
-    ${withSettingsTab ? "" : `<button class="icon-btn" data-so-open title="Settings">⚙</button>`}
-  </div>`;
+  return `<div class="tabs"><div class="seg">${tab("history", "History")}${tab("services", "By Service")}${tab("trends", "Trends")}</div></div>`;
 }
 
 /* ============================================================================
    PANES
    ========================================================================== */
-
 function svcDot(k) { return `<span class="svc-dot" style="background:${(SVC[k] || SVC.other).color}"></span>`; }
 
 function historyPane() {
@@ -516,7 +447,6 @@ function historyPane() {
     const collapsed = !!state.collapsed[d.id];
     const total = fmtMins(dayTotal(d.dom));
     const nameBit = d.date ? `<span class="d-name">${d.name}</span> <span class="d-date">${d.date}</span>` : `<span class="d-name">${d.name}</span>`;
-    const pill = d.provisional ? ` <span class="prov-pill">counting</span>` : "";
     const span = d.span ? `<span class="d-span">${esc(d.span)}</span>` : "";
     const views = d.views.map((v) => {
       const tags = [];
@@ -532,11 +462,10 @@ function historyPane() {
     }).join("");
     return `<div class="day">
       <button class="day-hd ${collapsed ? "collapsed" : ""}" data-day-toggle="${d.id}">
-        <span class="chev">▼</span><span>${nameBit}${pill}${span}</span>
-        <span class="d-total ${d.provisional ? "prov" : ""}">${total}</span>
+        <span class="chev">▼</span><span>${nameBit}${span}</span><span class="d-total">${total}</span>
       </button>${collapsed ? "" : `<div class="views">${views}</div>`}</div>`;
   }).join("");
-  const note = `<div class="pane-note">Bar under each video = how much of it you've watched. “Today” updates live and re-files at ~${SETTINGS.dayEndsAround}.</div>`;
+  const note = `<div class="pane-note">Bar under each video = how much of it you've watched.</div>`;
   const more = (state.range === "month" || state.range === "custom") ? `<div class="more-row">+ earlier days in range — scroll to load</div>` : "";
   return note + rows + more;
 }
@@ -558,15 +487,15 @@ function byServicePane() {
       <span class="s-ic" style="background:${SVC[k].color}">${SVC[k].mono}</span>
       <span class="s-name">${SVC[k].name}</span>
       <span class="s-share">${Math.round(frac * 100)}%</span><span class="s-total">${fmtMins(t[k])}</span></div>
-      <div class="bar"><i style="width:${Math.round(frac * 100)}%;background:${SVC[k].color};opacity:.8"></i></div>${kids}</div>`;
+      <div class="bar"><i style="width:${Math.round(frac * 100)}%;background:${SVC[k].color};opacity:.85"></i></div>${kids}</div>`;
   }).join("");
-  const otherFrac = t.other / grand;
+  const oFrac = t.other / grand;
   const adapter = t.other > 0 ? `<div class="adapter-hd">Other sites — need an Adapter</div>
-    <div class="adapter-sub">${Math.round(otherFrac * 100)}% of the range · ${fmtMins(t.other)}. Counted, but metadata is thin.</div>
+    <div class="adapter-sub">${Math.round(oFrac * 100)}% of the range · ${fmtMins(t.other)}. Counted, but metadata is thin.</div>
     <div class="svc"><div class="svc-top"><button class="exp spacer">▶</button>
       <span class="s-ic" style="background:${SVC.other.color}">•</span><span class="s-name">All other sites</span>
-      <span class="s-share">${Math.round(otherFrac * 100)}%</span><span class="s-total">${fmtMins(t.other)}</span></div>
-      <div class="bar"><i style="width:${Math.round(otherFrac * 100)}%;background:${SVC.other.color};opacity:.8"></i></div></div>
+      <span class="s-share">${Math.round(oFrac * 100)}%</span><span class="s-total">${fmtMins(t.other)}</span></div>
+      <div class="bar"><i style="width:${Math.round(oFrac * 100)}%;background:${SVC.other.color};opacity:.85"></i></div></div>
     ${NEEDS_ADAPTER.map((n) => `<div class="svc"><div class="svc-top"><button class="exp spacer">▶</button>
       <span class="s-ic" style="background:var(--other);opacity:.6">•</span><span class="s-name">${esc(n.name)}</span>
       <span class="s-total">${fmtMins(t.other * n.minsShare)}</span></div>
@@ -574,59 +503,53 @@ function byServicePane() {
   return scope + real + adapter;
 }
 
-function trendsPane(orient) {
+function trendsPane() {
   const days = rangeDayList().filter((d) => d >= 1 && d <= 31);
   const scope = `<div class="tr-scope">Watched time per day · <b>${RANGES[state.range].label}</b> · ${esc(rangeResolved())}</div>`;
   const legend = `<div class="tr-legend">${SVC_ORDER.map((k) => `<span><i style="background:${SVC[k].color}"></i>${SVC[k].name}</span>`).join("")}</div>`;
 
   if (days.length <= 1) {
-    const d = days[0];
-    const t = d ? DAILY[d] || {} : {};
+    const d = days[0], t = d ? DAILY[d] || {} : {};
     return `<div class="tr-wrap">${scope}
-      <div class="tr-hint">A single day has no trend to show. This is ${d ? "today" : "the selected day"}'s mix:</div>
+      <div class="tr-hint">A single day has no trend — here's ${d ? "today" : "the day"}'s mix:</div>
       <div class="tr-rows" style="margin-top:10px">
         ${SVC_ORDER.filter((k) => (t[k] || 0) > 0).map((k) => `<div class="tr-row">
-          <span class="rl">${SVC[k].name}</span>
-          <span class="rt"><i style="width:100%;background:${SVC[k].color};opacity:.8"></i></span>
+          <span class="rl">${SVC[k].name}</span><span class="rt"><i style="width:100%;background:${SVC[k].color};opacity:.85"></i></span>
           <span class="rv">${fmtMins(t[k])}</span></div>`).join("") || '<div class="tr-hint">nothing watched yet</div>'}
       </div>${legend}</div>`;
   }
 
   const maxDay = Math.max(...days.map(dayTotal), 1);
-  const isMonth = days.length > 12;
+  const horizontal = days.length <= 14;
 
-  if (orient === "horizontal") {
+  if (horizontal) {
     const rows = days.map((d) => {
-      const t = DAILY[d] || {}, tot = dayTotal(d);
+      const tt = DAILY[d] || {}, tot = dayTotal(d);
       const rl = (WDL[d] || "Aug") + " " + d;
-      const segs = SVC_ORDER.map((k) => (t[k] || 0) > 0
-        ? `<i style="width:${(t[k] / maxDay * 100).toFixed(1)}%;background:${SVC[k].color};opacity:.85"></i>` : "").join("");
+      const segs = SVC_ORDER.map((k) => (tt[k] || 0) > 0
+        ? `<i style="width:${(tt[k] / maxDay * 100).toFixed(1)}%;background:${SVC[k].color};opacity:.9"></i>` : "").join("");
       return `<div class="tr-row ${tot === 0 ? "zero" : ""}"><span class="rl">${rl}</span>
         <span class="rt">${segs}</span><span class="rv">${tot ? fmtMins(tot) : "–"}</span></div>`;
     }).join("");
     return `<div class="tr-wrap">${scope}
       <div class="tr-ymax">bar length ∝ watch time · longest day = ${fmtMins(maxDay)}</div>
-      <div class="tr-rows">${rows}</div>${legend}</div>`;
+      <div class="tr-rows">${rows}</div>${legend}
+      <div class="tr-hint">Horizontal — ${days.length} days (≤ 14).</div></div>`;
   }
 
-  // vertical columns
-  const H = 150;
+  const H = 150, dense = days.length > 20;
   const cols = days.map((d) => {
-    const t = DAILY[d] || {};
-    const segs = SVC_ORDER.map((k) => (t[k] || 0) > 0
-      ? `<span class="seg" style="height:${(t[k] / maxDay * H).toFixed(1)}px;background:${SVC[k].color};opacity:.85"></span>` : "").join("");
-    return `<div class="tr-col">${dayIsProv(d) ? '<span class="cap"></span>' : ""}${segs}</div>`;
+    const tt = DAILY[d] || {};
+    const segs = SVC_ORDER.map((k) => (tt[k] || 0) > 0
+      ? `<span class="seg" style="height:${(tt[k] / maxDay * H).toFixed(1)}px;background:${SVC[k].color};opacity:.9"></span>` : "").join("");
+    return `<div class="tr-col">${segs}</div>`;
   }).join("");
-  const xax = days.map((d, i) => {
-    if (isMonth && i % 5 !== 0 && d !== NOW.d) return `<span></span>`;
-    return `<span>${isMonth ? d : (WD[d] || "")}</span>`;
-  }).join("");
+  const xax = days.map((d, i) => (i % 5 === 0 || d === NOW.d) ? `<span>${d}</span>` : `<span></span>`).join("");
   return `<div class="tr-wrap">${scope}
     <div class="tr-ymax">top of chart = ${fmtMins(maxDay)}</div>
-    <div class="tr-cols ${isMonth ? "month" : ""}">${cols}</div>
-    <div class="tr-xax ${isMonth ? "month" : ""}">${xax}</div>${legend}
-    <div class="tr-hint">Hatched cap = day still open. ${isMonth ? "One column per day; labels every 5th." : "One column per day."}</div>
-  </div>`;
+    <div class="tr-cols ${dense ? "dense" : ""}">${cols}</div>
+    <div class="tr-xax ${dense ? "dense" : ""}">${xax}</div>${legend}
+    <div class="tr-hint">Vertical — ${days.length} days (> 14). One column per day, labels every 5th.</div></div>`;
 }
 
 function settingsPane() {
@@ -652,65 +575,60 @@ function settingsPane() {
 
 function paneBody() {
   if (state.pane === "services") return byServicePane();
-  if (state.pane === "trends") return trendsPane(state.variant === "H" ? "horizontal" : "vertical");
-  if (state.pane === "settings") return settingsPane();
+  if (state.pane === "trends") return trendsPane();
   return historyPane();
+}
+
+function settingsOverlay() {
+  return `<div class="slideover ${state.settingsOpen ? "open" : ""}">
+    <div class="so-hd"><button data-settings-close>‹</button> Settings</div>
+    <div class="body">${settingsPane()}</div>
+  </div>`;
 }
 
 /* ============================================================================
    VARIANTS
    ========================================================================== */
-
-function renderG() {
+function renderJ() {
   return `<div class="popover">
-    <div class="top">${topId()}${chips()}${weekStrip()}</div>
+    ${titleRow()}
+    <div class="chips-row">${presetChips()}</div>
+    <div class="calbox">${calGrid()}</div>
     ${serviceStrip()}
-    ${tabRow(true)}
+    ${tabRow()}
     <div class="body">${paneBody()}</div>
-    <div class="foot"><span>range=${state.range} · pane=${state.pane}</span><span>380×560 · week strip · 4 tabs</span></div>
+    ${settingsOverlay()}
   </div>`;
 }
 
-function renderH() {
+function renderK() {
   return `<div class="popover">
-    <div class="top">${topId()}${rangeDropdown()}</div>
+    ${titleRow()}
+    <div class="calbox k">${presetChips()}${calGrid()}</div>
     ${serviceStrip()}
-    ${tabRow(false)}
+    ${tabRow()}
     <div class="body">${paneBody()}</div>
-    <div class="foot"><span>range=${state.range} · pane=${state.pane}</span><span>380×560 · dropdown · gear settings</span></div>
-    ${state.soOpen ? `<div class="slideover open"><div class="so-hd"><button data-so-close>‹</button> Settings</div><div class="body">${settingsPane()}</div></div>` : ""}
-  </div>`;
-}
-
-function renderI() {
-  return `<div class="popover">
-    <div class="top">${topId()}${chips()}${weekStrip()}</div>
-    ${serviceStrip()}
-    ${tabRow(true)}
-    <div class="body">${paneBody()}</div>
-    <div class="foot"><span>range=${state.range} · pane=${state.pane}</span><span>380×560 · lands on Trends</span></div>
+    ${settingsOverlay()}
   </div>`;
 }
 
 /* ============================================================================
    RENDER + EVENTS
    ========================================================================== */
-const RENDERERS = { G: renderG, H: renderH, I: renderI };
-const NAMES = { G: "Week strip · 4 tabs · vertical Trends", H: "Range dropdown · gear · horizontal Trends", I: "Week strip · lands on Trends" };
-const ORDER = ["G", "H", "I"];
+const RENDERERS = { J: renderJ, K: renderK };
+const NAMES = { J: "Preset chips above the calendar", K: "Presets built into the calendar" };
+const ORDER = ["J", "K"];
 
 function render() {
   document.body.className = "variant-" + state.variant;
   $("#stage").innerHTML = RENDERERS[state.variant]();
   const P = $("#stage .popover");
-  $("#readout").textContent = `variant ${state.variant} · ${P ? P.offsetWidth : 0}×${P ? P.offsetHeight : 0} · range=${state.range} · total=${fmtMins(grandTotal())} · pane=${state.pane}`;
+  $("#readout").textContent = `variant ${state.variant} · range=${state.range} · cal=${state.calOpen ? "month" : "week"} · pane=${state.pane} · total=${fmtMins(grandTotal())}`;
   $("#switcher").innerHTML = `<button data-cycle="-1">‹</button><span class="label"><b>${state.variant}</b><span>${NAMES[state.variant]}</span></span><button data-cycle="1">›</button>`;
 }
 
 function setVariant(v) {
-  state.variant = v;
-  state.pane = v === "I" ? "trends" : "history";
-  state.soOpen = false; state.ddOpen = false;
+  state.variant = v; state.settingsOpen = false;
   const u = new URL(location.href); u.searchParams.set("variant", v); history.replaceState(null, "", u);
   render();
 }
@@ -718,33 +636,26 @@ function cycle(dir) { setVariant(ORDER[(ORDER.indexOf(state.variant) + dir + ORD
 
 function pickRange(k) {
   state.range = k;
-  if (k !== "custom") { state.customStart = state.customEnd = null; state.ddOpen = false; }
+  if (k === "custom") { state.calOpen = true; }
+  else { state.customStart = state.customEnd = null; state.calOpen = (k === "month"); }
   render();
-}
-function applyCustom() {
-  state.ddOpen = false; state.computing = true; render();
-  setTimeout(() => { state.computing = false; render(); }, 420);
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-cycle],[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-dd-toggle],[data-so-open],[data-so-close],[data-toggle-login],[data-day]");
-  if (!t) {
-    if (state.ddOpen && !e.target.closest(".rng-dd")) { state.ddOpen = false; render(); }
-    return;
-  }
+  const t = e.target.closest("[data-cycle],[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-cal-toggle],[data-settings-open],[data-settings-close],[data-toggle-login],[data-day]");
+  if (!t) return;
   if (t.dataset.cycle) return cycle(+t.dataset.cycle);
   if (t.dataset.range) return pickRange(t.dataset.range);
-  if (t.dataset.pane) { state.pane = t.dataset.pane; state.soOpen = false; return render(); }
+  if (t.dataset.pane) { state.pane = t.dataset.pane; return render(); }
   if (t.dataset.dayToggle) { state.collapsed[t.dataset.dayToggle] = !state.collapsed[t.dataset.dayToggle]; return render(); }
   if (t.dataset.svcToggle !== undefined) { state.ytExpanded = !state.ytExpanded; return render(); }
-  if (t.dataset.ddToggle !== undefined) { state.ddOpen = !state.ddOpen; return render(); }
-  if (t.dataset.soOpen !== undefined) { state.soOpen = true; return render(); }
-  if (t.dataset.soClose !== undefined) { state.soOpen = false; return render(); }
+  if (t.dataset.calToggle !== undefined) { state.calOpen = !state.calOpen; return render(); }
+  if (t.dataset.settingsOpen !== undefined) { state.settingsOpen = true; return render(); }
+  if (t.dataset.settingsClose !== undefined) { state.settingsOpen = false; return render(); }
   if (t.dataset.toggleLogin !== undefined) { SETTINGS.launchAtLogin = !SETTINGS.launchAtLogin; return render(); }
   if (t.dataset.cal) {
     if (t.dataset.cal === "prev") { state.calMonth--; if (state.calMonth < 0) { state.calMonth = 11; state.calYear--; } }
     if (t.dataset.cal === "next") { state.calMonth++; if (state.calMonth > 11) { state.calMonth = 0; state.calYear++; } }
-    if (t.dataset.cal === "apply") return applyCustom();
     return render();
   }
   if (t.dataset.day) {
@@ -752,8 +663,7 @@ document.addEventListener("click", (e) => {
     if (!state.customStart || (state.customStart && state.customEnd)) { state.customStart = d; state.customEnd = null; }
     else if (d < state.customStart) { state.customEnd = state.customStart; state.customStart = d; }
     else { state.customEnd = d; }
-    state.range = "custom";
-    if (state.customStart && state.customEnd) return applyCustom();
+    state.range = "custom"; state.calOpen = true;
     return render();
   }
 });
@@ -765,13 +675,13 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowRight") cycle(1);
 });
 
-const bootP = new URL(location.href).searchParams;
-const boot = bootP.get("variant");
-if (boot && ORDER.includes(boot.toUpperCase())) { state.variant = boot.toUpperCase(); state.pane = state.variant === "I" ? "trends" : "history"; }
-const bootPane = bootP.get("pane");
-if (["history", "services", "trends", "settings"].includes(bootPane)) state.pane = bootPane;
-const bootRange = bootP.get("range");
-if (["today", "week", "month"].includes(bootRange)) state.range = bootRange;
+const bp = new URL(location.href).searchParams;
+const bv = bp.get("variant");
+if (bv && ORDER.includes(bv.toUpperCase())) state.variant = bv.toUpperCase();
+const bpane = bp.get("pane");
+if (["history", "services", "trends"].includes(bpane)) state.pane = bpane;
+const brange = bp.get("range");
+if (["today", "week", "month"].includes(brange)) { state.range = brange; state.calOpen = (brange === "month"); }
 render();
 </script>
 </body>
