@@ -6,52 +6,42 @@ Answers wayfinder ticket [#7](https://github.com/AryanDeore/WatchLogs/issues/7) 
 ## Run it
 
 Open `index.html` by double-click. No build, no server. Switch layouts with the
-floating bar, the `←` / `→` keys, or `?variant=G|H|I`. Deep links also take
-`&pane=history|services|trends|settings` and `&range=today|week|month`.
+floating bar, the `←` / `→` keys, or `?variant=J|K`. Deep links also take
+`&pane=history|services|trends` and `&range=today|week|month`.
 
-## Where the design is now — round 3 (variants G / H / I)
+## Where the design is now — round 4 (variants J / K)
 
-Rounds 1 (A/B/C) and 2 (D/E/F) are in this branch's git history. Decisions locked
-in from those rounds:
+Rounds 1–3 (A/B/C, D/E/F, G/H/I) are in this branch's git history. Locked in:
 
-- **Separate, tabbed panes.** History (the event-log grain), By Service (range
-  totals), Trends (per-day rhythm), Settings — different grains, not one scroll.
-- **The calendar is not the hero.** It shrinks to a compact **week strip** pinned
-  at the top as the entry point; a month grid drops down only for **Custom**.
-- **New Trends pane.** One stacked bar per day across the selected range,
-  segmented by Service — the per-day overview the shrunk calendar gave up.
-- **Service summary strip** under the range control (from F), now with icons.
-- **By Service bars are part-to-whole:** the track is 100% of watched time in the
-  range, the fill is that Service's share; the "needs an Adapter" bucket is
-  inside the total so the parts sum to the whole.
-- **History's per-video bar = coverage** — how much of that video you've watched
-  at least once. Blank for live / unknown length.
+- Fixed popover, 380 pt wide. Three data panes, tabbed: **History / By Service /
+  Trends**. **Settings** is a top-right gear + slide-over — not a pane, not a tab.
+- **Range control on top.** Presets Today / This Week / This Month / Custom.
+- **Calendar defaults to a collapsed week row**; a toggle expands it in place to
+  the full month. This Month / Custom auto-expand it; Today / This Week collapse.
+  No dropdown layer. Calendar days carry no magnitude marks.
+- **Trends** = one stacked bar per day over the range, by Service. Orientation
+  follows span: **≤ 14 days → horizontal bars**, **> 14 → vertical columns**.
+- **By Service** bars are part-to-whole (track = 100% of range time, fill =
+  Service share; needs-an-Adapter bucket inside the total).
+- **History** per-video bar = how much of that video you've watched (coverage);
+  blank for live / unknown length.
+- **Summary strip** = top 3 domains, icons + time, no label.
+- No "counting" markers. Viz palette departs from brand (YouTube red / Netflix
+  amber / Twitch purple) so stacked bars stay legible.
 
-### The three variants
+### J vs K
 
-| | top control | Settings | Trends | lands on |
-|---|---|---|---|---|
-| **G** | week strip + preset chips | 4th tab | vertical stacked columns | History |
-| **H** | one range dropdown (most compact) | gear → slide-over | horizontal stacked bars | History |
-| **I** | week strip + preset chips | 4th tab | vertical stacked columns | **Trends** |
-
-G and I differ only in the default pane — I tests whether the per-day chart is
-the natural home screen now that the calendar shrank. H trades the always-visible
-week strip for vertical space and scans a sparse month as a list.
+Only the preset placement differs — **J** puts the chips in a row above the
+calendar; **K** builds them into the calendar card's header. Nearly identical
+when the calendar is collapsed.
 
 ## Mock data
 
 One source of truth: `DAILY` (watched minutes per day per Service). History, By
-Service and Trends all sum from it, so the numbers reconcile across panes. The
-calendar dates are fictional — Aug 25 2026 is treated as "Monday".
-
-## What's throwaway vs. what lifts
-
-- **Throwaway:** the whole page — variant shells, the faux menubar, the switcher,
-  the mock data.
-- **Lifts:** only the decisions, captured in `LAYOUT.md` and folded into the spec.
+Service and Trends all sum from it. Calendar dates are fictional (Aug 25 2026 =
+"Monday").
 
 ## Status
 
-Round 3 draft. Open questions for the next reaction are in `LAYOUT.md`. **Ticket
-#7 stays open** — HITL; it resolves once a direction is locked.
+Round 4 draft. Open questions in `LAYOUT.md`. **Ticket #7 stays open** — HITL; it
+resolves once a direction is locked.
