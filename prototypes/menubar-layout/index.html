@@ -1,0 +1,999 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WatchLogs — Menubar layout prototype (range selector + History / By Service / Settings)</title>
+<!--
+  PROTOTYPE — throwaway. Answers wayfinder ticket #7 on map #1.
+  Plan: three structurally different menubar-popover layouts on one page,
+  switchable via ?variant=A|B|C and a floating bottom bar. Mock data only,
+  no build, no server. Double-click this file.
+
+  What the three variants disagree about:
+    A  Compact tabbed     — 360x520, fixed. One pane at a time behind a tab row.
+    B  Single scroll      — 420x600, RESIZABLE. Everything in one scroll;
+                            Settings is a slide-over. Drag the corner handle.
+    C  Master / detail    — 560x640, fixed, window-like. Left nav rail + big pane.
+-->
+<style>
+  :root {
+    --wall-1: #2b3350;
+    --wall-2: #6d5f8c;
+    --wall-3: #c98d9b;
+    --ink: #1d1f24;
+    --ink-dim: #6b7280;
+    --ink-faint: #9aa1ad;
+    --panel: #f7f8fa;
+    --panel-2: #eef0f4;
+    --card: #ffffff;
+    --line: #e2e5ea;
+    --line-2: #d3d7de;
+    --accent: #3b6ef5;
+    --accent-soft: #e8effe;
+    --yt: #ff0033;
+    --nflx: #e50914;
+    --twitch: #9146ff;
+    --good: #128a5b;
+    --good-soft: #e2f4ec;
+    --warn: #a8630b;
+    --warn-soft: #fbeedd;
+    --prov: #7a4fd0;
+    --prov-soft: #efe8fb;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font: 13px/1.5 var(--sans);
+    color: var(--ink);
+    background: linear-gradient(150deg, var(--wall-1), var(--wall-2) 55%, var(--wall-3));
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- faux macOS menubar + desktop shell -------------------------------- */
+  .menubar {
+    position: fixed; inset: 0 0 auto 0; height: 26px; z-index: 50;
+    background: rgba(255,255,255,.62);
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 12px; font-size: 12px; color: #1d1f24;
+    border-bottom: 1px solid rgba(0,0,0,.08);
+  }
+  .menubar .mb-left { font-weight: 600; }
+  .menubar .mb-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .menubar .mb-eye {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 7px; border-radius: 6px; background: rgba(59,110,245,.16);
+    font-weight: 600; color: #23408c;
+  }
+  .menubar .mb-eye::before { content: "◉"; font-size: 11px; }
+
+  .desk {
+    min-height: 100%;
+    padding: 26px 0 120px;
+    display: flex; justify-content: flex-end;
+  }
+  .anchor { position: relative; margin: 8px 46px 0 0; }
+  .beak {
+    position: absolute; top: -7px; right: 26px; width: 14px; height: 14px;
+    background: var(--card); transform: rotate(45deg);
+    border-left: 1px solid rgba(0,0,0,.06); border-top: 1px solid rgba(0,0,0,.06);
+    z-index: 2;
+  }
+
+  /* ---- the popover box -------------------------------------------------- */
+  .popover {
+    position: relative; z-index: 1;
+    background: var(--card);
+    border-radius: 12px;
+    box-shadow: 0 18px 60px rgba(10,12,30,.42), 0 2px 8px rgba(10,12,30,.28);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    color: var(--ink);
+  }
+  .variant-A .popover { width: 360px; height: 520px; }
+  .variant-B .popover { width: 420px; height: 600px; }
+  .variant-C .popover { width: 560px; height: 640px; }
+
+  /* size / state readout that hangs off the popover (not part of the design) */
+  .readout {
+    position: absolute; left: 0; right: 0; bottom: -30px;
+    font: 11px/1.4 var(--mono); color: rgba(255,255,255,.85);
+    text-align: center; text-shadow: 0 1px 3px rgba(0,0,0,.5);
+  }
+
+  /* ---- shared bits ---------------------------------------------------- */
+  .hd { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
+  .app-name { font-weight: 700; font-size: 13px; letter-spacing: .01em; }
+  .app-name .dot { color: var(--accent); }
+
+  .seg { display: inline-flex; background: var(--panel-2); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button {
+    font: 12px var(--sans); border: 0; background: transparent; color: var(--ink-dim);
+    padding: 4px 9px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); font-weight: 600; }
+
+  .range-line { margin-top: 7px; font-size: 11.5px; color: var(--ink-dim); display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+  .range-line .res { font-family: var(--mono); color: var(--ink); }
+  .range-line .sub { color: var(--ink-faint); }
+  .spinner {
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid var(--line-2); border-top-color: var(--accent);
+    display: inline-block; animation: spin .7s linear infinite; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .icon-btn {
+    border: 1px solid var(--line-2); background: var(--card); color: var(--ink-dim);
+    width: 26px; height: 26px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .icon-btn:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+  .body { flex: 1; overflow: auto; }
+  .body::-webkit-scrollbar { width: 9px; }
+  .body::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 9px; border: 2px solid var(--card); }
+
+  .foot {
+    border-top: 1px solid var(--line); padding: 6px 12px;
+    font: 10.5px/1.4 var(--mono); color: var(--ink-faint);
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .foot .off { text-decoration: line-through; }
+
+  /* ---- History ------------------------------------------------------- */
+  .day { border-bottom: 1px solid var(--line); }
+  .day-hd {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 9px 14px; background: transparent; border: 0; cursor: pointer;
+    font: inherit; text-align: left; color: var(--ink);
+  }
+  .day-hd:hover { background: var(--panel); }
+  .day-hd .chev { color: var(--ink-faint); font-size: 10px; width: 10px; transition: transform .12s; }
+  .day-hd.collapsed .chev { transform: rotate(-90deg); }
+  .day-hd .d-name { font-weight: 650; }
+  .day-hd .d-date { color: var(--ink-faint); font-size: 11.5px; }
+  .day-hd .d-total { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+  .day-hd .d-span { display: block; font-size: 10.5px; color: var(--ink-faint); font-family: var(--mono); margin-top: 1px; }
+  .prov-pill {
+    font: 10px var(--sans); font-weight: 600; color: var(--prov);
+    background: var(--prov-soft); border-radius: 999px; padding: 1px 7px;
+  }
+  .day-hd .d-total.prov { color: var(--prov); font-style: italic; }
+
+  .views { padding: 2px 0 6px; }
+  .view {
+    display: grid; grid-template-columns: 14px 1fr auto; gap: 9px;
+    padding: 6px 14px 6px 14px; align-items: start;
+  }
+  .view:hover { background: var(--panel); }
+  .view .svc-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
+  .view .v-main { min-width: 0; }
+  .view .v-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
+  .view .v-meta { font-size: 11px; color: var(--ink-dim); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 1px; }
+  .tag {
+    font: 10px var(--mono); padding: 0 5px; border-radius: 4px;
+    background: var(--panel-2); color: var(--ink-dim);
+  }
+  .tag.fmt { background: #e9eefb; color: #2c4c9c; }
+  .tag.emb { background: var(--warn-soft); color: var(--warn); }
+  .tag.live { background: #fde8ec; color: var(--yt); }
+  .view .v-time { font-family: var(--mono); font-size: 11.5px; color: var(--ink); text-align: right; white-space: nowrap; }
+  .pos {
+    grid-column: 2 / 4; height: 3px; border-radius: 3px; background: var(--panel-2);
+    margin-top: 5px; overflow: hidden;
+  }
+  .pos > i { display: block; height: 100%; background: var(--line-2); }
+  .more-row { padding: 8px 14px; font-size: 11.5px; color: var(--ink-faint); font-style: italic; }
+
+  /* ---- By Service --------------------------------------------------- */
+  .svc-scope { padding: 10px 14px 4px; font-size: 11.5px; color: var(--ink-dim); }
+  .svc-scope b { color: var(--ink); font-weight: 600; }
+  .svc {
+    padding: 9px 14px; border-bottom: 1px solid var(--line);
+  }
+  .svc-top { display: flex; align-items: center; gap: 8px; }
+  .svc-top .exp {
+    border: 0; background: transparent; cursor: pointer; color: var(--ink-faint);
+    font-size: 10px; width: 12px; padding: 0;
+  }
+  .svc-top .exp.spacer { visibility: hidden; }
+  .svc-top .s-name { font-weight: 600; }
+  .svc-top .s-name .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+  .svc-top .s-total { margin-left: auto; font-family: var(--mono); font-size: 12px; }
+  .svc .bar { height: 6px; border-radius: 4px; background: var(--panel-2); margin-top: 7px; overflow: hidden; }
+  .svc .bar > i { display: block; height: 100%; background: var(--accent); opacity: .85; }
+  .svc-kids { margin: 8px 0 2px; padding-left: 20px; display: grid; gap: 4px; }
+  .svc-kids .k { display: flex; font-size: 11.5px; color: var(--ink-dim); }
+  .svc-kids .k .kt { font-family: var(--mono); }
+  .svc-kids .k .kn { margin-left: auto; font-family: var(--mono); color: var(--ink); }
+  .svc-kids .emb-sub {
+    font-size: 11px; color: var(--warn); border-top: 1px dashed var(--line-2);
+    padding-top: 4px; margin-top: 2px;
+  }
+  .generic-note { font-size: 10.5px; color: var(--ink-faint); margin-top: 3px; }
+
+  .adapter-group { background: var(--panel); }
+  .adapter-hd {
+    display: flex; align-items: center; gap: 7px; padding: 9px 14px 4px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--warn);
+  }
+  .adapter-hd::before { content: "⚠"; }
+  .adapter-sub { padding: 0 14px 6px; font-size: 11px; color: var(--ink-dim); }
+
+  /* ---- Settings --------------------------------------------------- */
+  .set { padding: 12px 14px; display: grid; gap: 14px; }
+  .field { display: grid; gap: 4px; }
+  .field label { font-weight: 600; font-size: 12px; }
+  .field .hint { font-size: 11px; color: var(--ink-faint); }
+  .field .ctl { display: flex; gap: 6px; align-items: center; }
+  .field input[type=text], .field input[type=number] {
+    font: 12px var(--mono); padding: 5px 8px; border: 1px solid var(--line-2);
+    border-radius: 7px; background: var(--card); color: var(--ink); width: 100%;
+  }
+  .field input[readonly] { background: var(--panel-2); color: var(--ink-dim); }
+  .field .mini {
+    font: 11px var(--sans); padding: 4px 8px; border: 1px solid var(--line-2);
+    border-radius: 6px; background: var(--card); cursor: pointer; white-space: nowrap;
+  }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .switch .track { width: 34px; height: 20px; border-radius: 999px; background: var(--line-2); position: relative; transition: background .12s; }
+  .switch .track > i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .12s; }
+  .switch.on .track { background: var(--good); }
+  .switch.on .track > i { left: 16px; }
+  .step-row { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; }
+  .step-row button { border: 0; background: var(--card); padding: 5px 10px; cursor: pointer; font: 13px var(--mono); }
+  .step-row .val { padding: 5px 12px; font: 12px var(--mono); border-left: 1px solid var(--line-2); border-right: 1px solid var(--line-2); }
+
+  /* ---- Categorical reserved slot -------------------------------- */
+  .cat-stub {
+    margin: 12px 14px; padding: 16px; border: 1.5px dashed var(--line-2);
+    border-radius: 10px; text-align: center; color: var(--ink-faint);
+  }
+  .cat-stub .soon { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--accent); }
+
+  /* ---- month grid (shared widget) ----------------------------- */
+  .cal {
+    position: absolute; z-index: 20; background: var(--card); border: 1px solid var(--line-2);
+    border-radius: 10px; box-shadow: 0 10px 30px rgba(10,12,30,.28); padding: 10px;
+    width: 232px;
+  }
+  .cal-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .cal-hd .m { font-weight: 650; font-size: 12px; }
+  .cal-hd button { border: 0; background: transparent; cursor: pointer; color: var(--ink-dim); font-size: 13px; padding: 2px 6px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal-grid .dow { font-size: 9.5px; color: var(--ink-faint); text-align: center; padding: 2px 0; text-transform: uppercase; }
+  .cal-grid .cell {
+    font: 11px var(--mono); text-align: center; padding: 5px 0; border-radius: 5px;
+    cursor: pointer; color: var(--ink); user-select: none;
+  }
+  .cal-grid .cell.mut { color: var(--ink-faint); }
+  .cal-grid .cell:hover { background: var(--panel-2); }
+  .cal-grid .cell.in { background: var(--accent-soft); border-radius: 0; }
+  .cal-grid .cell.end { background: var(--accent); color: #fff; }
+  .cal-foot { margin-top: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--ink-dim); }
+  .cal-foot button { font: 11px var(--sans); border: 1px solid var(--line-2); background: var(--card); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+
+  /* ================= VARIANT A — compact tabbed ================= */
+  .variant-A .a-tabs { display: flex; gap: 4px; padding: 8px 14px 0; }
+  .variant-A .a-tabs .seg { flex: 1; }
+  .variant-A .a-tabs .seg button { flex: 1; text-align: center; }
+  .variant-A .a-tabs .gear { margin-left: 6px; }
+  .variant-A .a-tabs .seg button:disabled { color: var(--ink-faint); cursor: default; }
+  .variant-A .a-tabs .seg button:disabled .soon { font-size: 8px; display: block; letter-spacing: .06em; }
+
+  /* ================= VARIANT B — single scroll ================= */
+  .variant-B .b-hd { position: sticky; top: 0; z-index: 10; background: var(--card); }
+  .variant-B .b-hd .row1 { display: flex; align-items: center; gap: 8px; padding: 12px 14px 0; }
+  .variant-B .b-hd .row1 .app-name { margin-right: auto; }
+  .variant-B .b-section-hd {
+    padding: 12px 14px 6px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--ink-faint); background: var(--panel);
+    border-bottom: 1px solid var(--line); position: sticky; top: 84px; z-index: 5;
+  }
+  .variant-B .slideover {
+    position: absolute; inset: 0; background: var(--card); z-index: 30;
+    display: flex; flex-direction: column;
+    transform: translateX(100%); transition: transform .18s ease;
+  }
+  .variant-B .slideover.open { transform: translateX(0); }
+  .variant-B .slideover .so-hd { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; }
+  .variant-B .slideover .so-hd button { border: 0; background: transparent; font-size: 15px; cursor: pointer; color: var(--ink-dim); }
+  .variant-B .resize-h {
+    position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px;
+    cursor: nwse-resize; z-index: 40;
+    background: linear-gradient(135deg, transparent 46%, var(--line-2) 46%, var(--line-2) 54%, transparent 54%, transparent 66%, var(--line-2) 66%, var(--line-2) 74%, transparent 74%);
+  }
+
+  /* ================= VARIANT C — master / detail ================= */
+  .variant-C .c-wrap { display: grid; grid-template-columns: 156px 1fr; flex: 1; min-height: 0; }
+  .variant-C .rail {
+    background: var(--panel); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 12px 10px; gap: 4px;
+  }
+  .variant-C .rail .app-name { padding: 0 6px 6px; }
+  .variant-C .rail .range-btn {
+    text-align: left; font: 12px var(--sans); border: 1px solid var(--line-2);
+    background: var(--card); border-radius: 8px; padding: 7px 9px; cursor: pointer;
+    margin-bottom: 8px; position: relative;
+  }
+  .variant-C .rail .range-btn .rb-label { font-weight: 600; }
+  .variant-C .rail .range-btn .rb-res { display: block; font: 10px var(--mono); color: var(--ink-dim); margin-top: 2px; }
+  .variant-C .rail nav { display: grid; gap: 2px; }
+  .variant-C .rail nav button {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    border: 0; background: transparent; padding: 7px 9px; border-radius: 7px;
+    font: 12.5px var(--sans); color: var(--ink-dim); cursor: pointer;
+  }
+  .variant-C .rail nav button .ic { width: 14px; text-align: center; }
+  .variant-C .rail nav button.on { background: var(--accent-soft); color: #23408c; font-weight: 650; }
+  .variant-C .rail nav button:disabled { color: var(--ink-faint); cursor: default; }
+  .variant-C .rail nav button .lock { margin-left: auto; font-size: 10px; }
+  .variant-C .rail .rail-foot { margin-top: auto; font: 10px var(--mono); color: var(--ink-faint); padding: 6px; }
+  .variant-C .detail { display: flex; flex-direction: column; min-width: 0; }
+  .variant-C .detail .d-hd { padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
+  .variant-C .detail .d-hd h2 { margin: 0; font-size: 15px; }
+  .variant-C .detail .d-hd .sub { font-size: 11.5px; color: var(--ink-dim); margin-top: 2px; }
+  .variant-C .detail .d-body { flex: 1; overflow: auto; }
+  .variant-C .chart-svc { padding: 12px 16px; display: grid; gap: 14px; }
+  .variant-C .chart-svc .crow .clabel { display: flex; font-size: 12px; margin-bottom: 4px; }
+  .variant-C .chart-svc .crow .clabel .cn { font-weight: 600; }
+  .variant-C .chart-svc .crow .clabel .cv { margin-left: auto; font-family: var(--mono); }
+  .variant-C .chart-svc .ctrack { height: 20px; background: var(--panel-2); border-radius: 5px; overflow: hidden; display: flex; }
+  .variant-C .chart-svc .ctrack > i { height: 100%; display: block; }
+  .variant-C .chart-svc .ckids { padding-left: 12px; margin-top: 8px; display: grid; gap: 8px; }
+  .variant-C .chart-svc .ckids .ck .cktrack { height: 12px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+  .variant-C .chart-svc .ckids .ck .cktrack > i { display: block; height: 100%; background: var(--yt); opacity: .8; }
+  .variant-C .chart-svc .ckids .ck .cklabel { display: flex; font-size: 11px; color: var(--ink-dim); margin-bottom: 3px; }
+  .variant-C .chart-svc .ckids .ck .cklabel .v { margin-left: auto; font-family: var(--mono); }
+
+  /* ---- floating variant switcher (NOT part of the design) ---- */
+  #switcher {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    z-index: 999; display: flex; align-items: center; gap: 2px;
+    background: #0f1220; color: #fff; border-radius: 999px; padding: 5px 6px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.5); font: 12px var(--sans);
+  }
+  #switcher button {
+    border: 0; background: transparent; color: #fff; cursor: pointer;
+    font-size: 15px; width: 30px; height: 28px; border-radius: 999px;
+  }
+  #switcher button:hover { background: rgba(255,255,255,.14); }
+  #switcher .label { padding: 0 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #switcher .label b { font-weight: 700; }
+  #switcher .label span { opacity: .6; margin-left: 6px; }
+  .hint-note {
+    position: fixed; left: 50%; bottom: 4px; transform: translateX(-50%);
+    z-index: 999; color: rgba(255,255,255,.7); font: 10px var(--mono); text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  }
+</style>
+</head>
+<body>
+<div class="menubar">
+  <span class="mb-left">WatchLogs</span>
+  <span class="mb-right">
+    <span class="mb-eye">2h 05m</span>
+    <span>Fri 29 Aug&nbsp;&nbsp;9:41 PM</span>
+  </span>
+</div>
+
+<div class="desk">
+  <div class="anchor">
+    <div class="beak"></div>
+    <div id="stage"></div>
+    <div class="readout" id="readout"></div>
+  </div>
+</div>
+
+<div id="switcher"></div>
+<div class="hint-note">← / → to switch layouts &nbsp;·&nbsp; ?variant=A|B|C</div>
+
+<script>
+/* ============================================================================
+   MOCK DATA  — nothing here is real; it exists to give the layouts real density
+   ========================================================================== */
+
+const RANGES = {
+  today: { label: "Today",      sub: "open day · provisional", res: "Fri Aug 29 (so far)" },
+  week:  { label: "This Week",  sub: "Mon–today · instant",    res: "Mon Aug 25 – Fri Aug 29" },
+  month: { label: "This Month", sub: "1st–today · instant",    res: "Aug 1 – Aug 29" },
+  custom:{ label: "Custom",     sub: "pick a range",           res: "—" },
+};
+
+const SVC_COLOR = { youtube: "var(--yt)", netflix: "var(--nflx)", twitch: "var(--twitch)", vimeo: "#17b3e8", mit: "#8a1a2b" };
+
+// History: activity-flexed "days", newest first. `startsAt` is the day's start;
+// a day may run past midnight and still be one group under its start date.
+const HISTORY = [
+  {
+    id: "today", name: "Today", date: null, provisional: true,
+    span: "started 6:12 PM · still open", total: "2h 05m",
+    views: [
+      { svc: "youtube", title: "The Untold History of the Spreadsheet", author: "Veritasium", fmt: "standard", embedded: false, watched: "48m", pos: 0.72, at: "7:20 PM" },
+      { svc: "youtube", title: "lofi hip hop radio — beats to relax/study to", author: "Lofi Girl", fmt: "live", embedded: false, watched: "52m", pos: null, at: "8:30 PM" },
+      { svc: "netflix", title: "The Diplomat — S2:E4 “Keep Your Enemies Closer”", author: "Netflix", fmt: "standard", embedded: false, watched: "25m", pos: 0.40, at: "9:14 PM" },
+    ],
+  },
+  {
+    id: "d-thu", name: "Thursday", date: "Aug 28", provisional: false,
+    span: "7:02 PM → 11:48 PM", total: "3h 32m",
+    views: [
+      { svc: "youtube", title: "How the ILC-2 landed 6 boosters in one night", author: "Scott Manley", fmt: "standard", embedded: false, watched: "1h 04m", pos: 0.95, at: "7:02 PM" },
+      { svc: "youtube", title: "#Shorts — the one-pan trick", author: "Adam Ragusea", fmt: "short", embedded: false, watched: "3m", pos: 1.0, at: "8:11 PM" },
+      { svc: "vimeo", title: "Type design lecture 04 (embedded on typo.blog)", author: "typo.blog", fmt: "standard", embedded: true, watched: "41m", pos: 0.55, at: "8:30 PM" },
+      { svc: "netflix", title: "Kill Eve — S1:E1", author: "Netflix", fmt: "standard", embedded: false, watched: "1h 44m", pos: 1.0, at: "9:40 PM" },
+    ],
+  },
+  {
+    id: "d-wed", name: "Wednesday", date: "Aug 27", provisional: false,
+    span: "9:40 PM → 10:52 PM", total: "1h 12m",
+    views: [
+      { svc: "twitch", title: "summit1g — just chatting / DayZ", author: "summit1g", fmt: "live", embedded: false, watched: "1h 12m", pos: null, at: "9:40 PM" },
+    ],
+  },
+  {
+    id: "d-mon", name: "Monday", date: "Aug 25", provisional: false,
+    span: "9:04 AM → 3:12 AM (+1d)", total: "6h 48m",
+    pastMidnight: true,
+    views: [
+      { svc: "youtube", title: "Deep work playlist (background while coding)", author: "various", fmt: "standard", embedded: false, watched: "3h 02m", pos: 0.8, at: "9:04 AM" },
+      { svc: "netflix", title: "Dune: Part Two", author: "Netflix", fmt: "standard", embedded: false, watched: "2h 46m", pos: 1.0, at: "11:20 PM" },
+      { svc: "youtube", title: "Why I can't sleep — 3AM ramble", author: "some vlogger", fmt: "standard", embedded: false, watched: "1h 00m", pos: 0.6, at: "1:40 AM (Tue clock)" },
+    ],
+  },
+];
+
+// By Service — aggregate for the active range (kept static across ranges here;
+// only the scope caption changes, so "every pane obeys the selector" is visible).
+const BYSERVICE = {
+  ranked: [
+    {
+      key: "youtube", name: "YouTube", total: "5h 14m", mins: 314, frac: 0.55, adapter: true,
+      children: [
+        { label: "standard", time: "3h 40m", mins: 220 },
+        { label: "short",    time: "1h 12m", mins: 72 },
+        { label: "live",     time: "22m",    mins: 22 },
+      ],
+      embedded: "18m",
+    },
+    { key: "netflix", name: "Netflix", total: "3h 02m", mins: 182, frac: 0.32, adapter: true },
+    { key: "twitch",  name: "Twitch",  total: "1h 12m", mins: 72,  frac: 0.13, adapter: false },
+  ],
+  needsAdapter: [
+    { name: "typo.blog", total: "41m", note: "generic extraction · title only, no video id" },
+    { name: "ocw.mit.edu", total: "12m", note: "generic extraction · no author" },
+  ],
+};
+
+const SETTINGS = {
+  token: "wl_9f2a17b4…c71d",
+  port: 47600,
+  retentionDays: 90,
+  launchAtLogin: true,
+  dayEndsAround: "04:00",
+  version: "0.1.0 · contract v1",
+};
+
+/* ============================================================================
+   STATE  (in memory only — prototype rule: no persistence)
+   ========================================================================== */
+
+const state = {
+  variant: "A",
+  range: "week",
+  pane: "history",          // history | services | settings   (A and C)
+  collapsed: { "d-mon": true },
+  ytExpanded: true,
+  calOpen: false,
+  calMonth: 7,              // 0-indexed; 7 = August
+  calYear: 2026,
+  customStart: null,
+  customEnd: null,
+  computing: false,         // fake spinner for Custom
+  popW: 420, popH: 600,     // variant B live size
+  soOpen: false,            // variant B settings slide-over
+};
+
+/* ============================================================================
+   SMALL HELPERS
+   ========================================================================== */
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function rangeResolved() {
+  if (state.range === "custom" && state.customStart && state.customEnd) {
+    const f = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return `${f(state.customStart)} – ${f(state.customEnd)}`;
+  }
+  return RANGES[state.range].res;
+}
+
+function visibleDays() {
+  if (state.range === "today") return HISTORY.filter((d) => d.id === "today");
+  if (state.range === "week")  return HISTORY;
+  return HISTORY; // month / custom: same mock set + a "+earlier" stub row
+}
+
+/* ---- shared: date-range segmented control ---- */
+function rangeSeg(size) {
+  const keys = ["today", "week", "month", "custom"];
+  return `<div class="seg range-seg" data-size="${size}">${keys
+    .map((k) => `<button data-range="${k}" class="${state.range === k ? "on" : ""}">${RANGES[k].label}</button>`)
+    .join("")}</div>`;
+}
+
+function rangeLine() {
+  const r = RANGES[state.range];
+  const spin = state.computing ? `<span class="spinner"></span>` : "";
+  return `<div class="range-line">${spin}<span class="res">${esc(rangeResolved())}</span><span class="sub">${esc(r.sub)}</span></div>`;
+}
+
+/* ---- shared: month grid ---- */
+function monthGrid(anchorCss) {
+  const first = new Date(state.calYear, state.calMonth, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(state.calYear, state.calMonth + 1, 0).getDate();
+  const monthName = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const dows = ["S", "M", "T", "W", "T", "F", "S"].map((d) => `<div class="dow">${d}</div>`).join("");
+
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(`<div class="cell mut"></div>`);
+  const s = state.customStart, e = state.customEnd;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(state.calYear, state.calMonth, d);
+    let cls = "cell";
+    if (s && e && date >= s && date <= e) cls += " in";
+    if ((s && +date === +s) || (e && +date === +e)) cls += " end";
+    cells.push(`<div class="${cls}" data-day="${d}">${d}</div>`);
+  }
+
+  return `<div class="cal" style="${anchorCss}">
+    <div class="cal-hd">
+      <button data-cal="prev">‹</button>
+      <span class="m">${monthName}</span>
+      <button data-cal="next">›</button>
+    </div>
+    <div class="cal-grid">${dows}${cells.join("")}</div>
+    <div class="cal-foot">
+      <span>${s && e ? "click Apply" : s ? "pick end day" : "pick start day"}</span>
+      <button data-cal="apply">Apply</button>
+    </div>
+  </div>`;
+}
+
+/* ============================================================================
+   PANE RENDERERS  (shared markup, reused by every variant's body)
+   ========================================================================== */
+
+function svcDot(key) { return `<span class="svc-dot" style="background:${SVC_COLOR[key] || "var(--ink-faint)"}"></span>`; }
+
+function viewRow(v) {
+  const tags = [];
+  if (v.fmt && v.fmt !== "standard") tags.push(`<span class="tag ${v.fmt === "live" ? "live" : "fmt"}">${v.fmt}</span>`);
+  if (v.embedded) tags.push(`<span class="tag emb">embedded</span>`);
+  const pos = v.pos == null ? "" : `<div class="pos"><i style="width:${Math.round(v.pos * 100)}%"></i></div>`;
+  return `<div class="view">
+    ${svcDot(v.svc)}
+    <div class="v-main">
+      <div class="v-title">${esc(v.title)}</div>
+      <div class="v-meta"><span>${esc(v.author)}</span><span>·</span><span>${esc(v.at)}</span>${tags.join("")}</div>
+    </div>
+    <div class="v-time">${esc(v.watched)}</div>
+    ${pos}
+  </div>`;
+}
+
+function historyPane() {
+  const days = visibleDays().map((d) => {
+    const isCollapsed = !!state.collapsed[d.id];
+    const totalCls = d.provisional ? "d-total prov" : "d-total";
+    const nameBit = d.date
+      ? `<span class="d-name">${d.name}</span> <span class="d-date">${d.date}</span>`
+      : `<span class="d-name">${d.name}</span>`;
+    const provPill = d.provisional ? ` <span class="prov-pill">counting</span>` : "";
+    const span = d.span ? `<span class="d-span">${esc(d.span)}</span>` : "";
+    return `<div class="day">
+      <button class="day-hd ${isCollapsed ? "collapsed" : ""}" data-day-toggle="${d.id}">
+        <span class="chev">▼</span>
+        <span>${nameBit}${provPill}${span}</span>
+        <span class="${totalCls}">${esc(d.total)}</span>
+      </button>
+      ${isCollapsed ? "" : `<div class="views">${d.views.map(viewRow).join("")}</div>`}
+    </div>`;
+  }).join("");
+
+  const moreRow = (state.range === "month" || state.range === "custom")
+    ? `<div class="more-row">+ 21 earlier days in range — scroll to load</div>` : "";
+
+  const provNote = visibleDays().some((d) => d.provisional)
+    ? `<div class="more-row">“Today” is still open. Its total updates live and re-files into the right day at ~${SETTINGS.dayEndsAround}.</div>`
+    : "";
+
+  return days + moreRow + provNote;
+}
+
+function serviceRow(s) {
+  const expandable = !!s.children;
+  const isOpen = expandable && state.ytExpanded;
+  const exp = expandable
+    ? `<button class="exp" data-svc-toggle="${s.key}">${isOpen ? "▼" : "▶"}</button>`
+    : `<button class="exp spacer">▶</button>`;
+  const kids = (expandable && isOpen)
+    ? `<div class="svc-kids">
+        ${s.children.map((c) => `<div class="k"><span class="kt">${c.label}</span><span class="kn">${c.time}</span></div>`).join("")}
+        <div class="k emb-sub"><span class="kt">— of which embedded</span><span class="kn">${s.embedded}</span></div>
+      </div>` : "";
+  const generic = s.adapter === false ? `<div class="generic-note">generic extraction · no Adapter yet</div>` : "";
+  return `<div class="svc">
+    <div class="svc-top">
+      ${exp}
+      <span class="s-name"><span class="sw" style="background:${SVC_COLOR[s.key]}"></span>${esc(s.name)}</span>
+      <span class="s-total">${esc(s.total)}</span>
+    </div>
+    <div class="bar"><i style="width:${Math.round(s.frac * 100)}%"></i></div>
+    ${kids}
+    ${generic}
+  </div>`;
+}
+
+function servicesPane() {
+  const scope = `<div class="svc-scope">Watched time · <b>${RANGES[state.range].label}</b> · ${esc(rangeResolved())}</div>`;
+  const ranked = BYSERVICE.ranked.map(serviceRow).join("");
+  const adapter = `<div class="adapter-group">
+    <div class="adapter-hd">Needs an Adapter</div>
+    <div class="adapter-sub">Counted, but metadata is thin. Grouped by domain until an Adapter ships.</div>
+    ${BYSERVICE.needsAdapter.map((n) => `<div class="svc">
+        <div class="svc-top">
+          <button class="exp spacer">▶</button>
+          <span class="s-name">${esc(n.name)}</span>
+          <span class="s-total">${esc(n.total)}</span>
+        </div>
+        <div class="generic-note">${esc(n.note)}</div>
+      </div>`).join("")}
+  </div>`;
+  return scope + ranked + adapter;
+}
+
+function settingsPane() {
+  const S = SETTINGS;
+  return `<div class="set">
+    <div class="field">
+      <label>Pairing string</label>
+      <div class="hint">Paste this into the Extension once. Contains host, port, and token.</div>
+      <div class="ctl">
+        <input type="text" readonly value="${esc(S.token)}" />
+        <button class="mini" data-noop>Copy</button>
+        <button class="mini" data-noop>Regenerate</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Local port</label>
+      <div class="hint">App listens on 127.0.0.1. Re-rolls if the port is taken.</div>
+      <div class="ctl"><input type="number" value="${S.port}" /></div>
+    </div>
+    <div class="field">
+      <label>Keep raw events for</label>
+      <div class="hint">Views and computed time are kept forever. Only the raw event log is pruned.</div>
+      <div class="ctl">
+        <span class="step-row">
+          <button data-noop>–</button><span class="val">${S.retentionDays} days</span><button data-noop>+</button>
+        </span>
+      </div>
+    </div>
+    <div class="field">
+      <label>My day ends around</label>
+      <div class="hint">Late-night watching before this time files into the previous day.</div>
+      <div class="ctl">
+        <span class="step-row">
+          <button data-noop>–</button><span class="val">${S.dayEndsAround}</span><button data-noop>+</button>
+        </span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Launch at login</label>
+      <div class="ctl">
+        <span class="switch ${S.launchAtLogin ? "on" : ""}" data-toggle-login><span class="track"><i></i></span></span>
+      </div>
+    </div>
+    <div class="field">
+      <div class="hint">${esc(S.version)}</div>
+    </div>
+  </div>`;
+}
+
+function catStub() {
+  return `<div class="cat-stub">
+    <div class="soon">RESERVED</div>
+    <div style="margin-top:6px">Categories pane</div>
+    <div style="font-size:11px;margin-top:4px">ML grouping of Views by topic. Same range selector will drive it.</div>
+  </div>`;
+}
+
+function paneBody(pane) {
+  if (pane === "history") return historyPane();
+  if (pane === "services") return servicesPane();
+  if (pane === "settings") return settingsPane();
+  if (pane === "categories") return catStub();
+  return "";
+}
+
+/* ============================================================================
+   VARIANT A — compact tabbed  (360 x 520, fixed)
+   ========================================================================== */
+function renderA() {
+  const tab = (k, label, extra = "") =>
+    `<button data-pane="${k}" class="${state.pane === k ? "on" : ""}" ${extra}>${label}</button>`;
+  return `<div class="popover">
+    <div class="hd">
+      <div class="app-name">Watch<span class="dot">·</span>Logs</div>
+      <div style="margin-top:8px">${rangeSeg("sm")}</div>
+      ${rangeLine()}
+      ${state.calOpen ? monthGrid("top:96px;left:14px") : ""}
+    </div>
+    <div class="a-tabs">
+      <div class="seg">
+        ${tab("history", "History")}
+        ${tab("services", "Services")}
+        <button disabled>Categories<span class="soon">SOON</span></button>
+      </div>
+      <button class="icon-btn gear" data-pane="settings" title="Settings">⚙</button>
+    </div>
+    <div class="body">${paneBody(state.pane === "settings" ? "settings" : state.pane)}</div>
+    <div class="foot">
+      <span>range=${state.range} · pane=${state.pane}</span>
+      <span>360×520 · <span class="off">resize</span> fixed</span>
+    </div>
+  </div>`;
+}
+
+/* ============================================================================
+   VARIANT B — single scroll + settings slide-over  (420 x 600, RESIZABLE)
+   ========================================================================== */
+function renderB() {
+  return `<div class="popover" style="width:${state.popW}px;height:${state.popH}px">
+    <div class="b-hd">
+      <div class="row1">
+        <div class="app-name">Watch<span class="dot">·</span>Logs</div>
+        <button class="icon-btn" data-so-open title="Settings">⚙</button>
+      </div>
+      <div style="padding:8px 14px 10px">
+        ${rangeSeg("md")}
+        ${rangeLine()}
+        ${state.calOpen ? monthGrid("top:110px;left:14px") : ""}
+      </div>
+    </div>
+    <div class="body">
+      <div class="b-section-hd">History</div>
+      ${historyPane()}
+      <div class="b-section-hd">By Service</div>
+      ${servicesPane()}
+      <div class="b-section-hd">Categories</div>
+      ${catStub()}
+    </div>
+    <div class="foot">
+      <span>range=${state.range}</span>
+      <span>${state.popW}×${state.popH} · drag corner ↘</span>
+    </div>
+    <div class="slideover ${state.soOpen ? "open" : ""}">
+      <div class="so-hd"><button data-so-close>‹</button> Settings</div>
+      <div class="body">${settingsPane()}</div>
+    </div>
+    <div class="resize-h" data-resize></div>
+  </div>`;
+}
+
+/* ============================================================================
+   VARIANT C — master / detail  (560 x 640, fixed, window-like)
+   ========================================================================== */
+function renderC() {
+  const navBtn = (k, ic, label, opts = {}) => {
+    if (opts.locked) return `<button disabled><span class="ic">${ic}</span>${label}<span class="lock">🔒</span></button>`;
+    return `<button data-pane="${k}" class="${state.pane === k ? "on" : ""}"><span class="ic">${ic}</span>${label}</button>`;
+  };
+
+  let detail;
+  if (state.pane === "services") {
+    detail = `<div class="d-hd"><h2>By Service</h2><div class="sub">${RANGES[state.range].label} · ${esc(rangeResolved())}</div></div>
+      <div class="d-body"><div class="chart-svc">
+        ${BYSERVICE.ranked.map((s) => {
+          const kids = s.children && state.ytExpanded ? `<div class="ckids">
+            ${s.children.map((c) => `<div class="ck">
+              <div class="cklabel"><span>${c.label}</span><span class="v">${c.time}</span></div>
+              <div class="cktrack"><i style="width:${Math.round((c.mins / s.mins) * 100)}%"></i></div>
+            </div>`).join("")}
+            <div class="cklabel" style="color:var(--warn)"><span>— of which embedded</span><span class="v">${s.embedded}</span></div>
+          </div>` : "";
+          const toggle = s.children ? `<button class="exp" data-svc-toggle="${s.key}" style="border:0;background:transparent;cursor:pointer;color:var(--ink-faint)">${state.ytExpanded ? "▼" : "▶"}</button>` : "";
+          return `<div class="crow">
+            <div class="clabel"><span class="cn">${toggle} ${esc(s.name)}${s.adapter === false ? ' <span class="tag">no adapter</span>' : ""}</span><span class="cv">${s.total}</span></div>
+            <div class="ctrack"><i style="width:${Math.round(s.frac * 100)}%;background:${SVC_COLOR[s.key]}"></i></div>
+            ${kids}
+          </div>`;
+        }).join("")}
+        <div class="crow">
+          <div class="clabel"><span class="cn" style="color:var(--warn)">⚠ Needs an Adapter</span><span class="cv">53m</span></div>
+          ${BYSERVICE.needsAdapter.map((n) => `<div class="clabel" style="font-size:11px;color:var(--ink-dim)"><span>${esc(n.name)} — ${esc(n.note)}</span><span class="v">${n.total}</span></div>`).join("")}
+        </div>
+      </div></div>`;
+  } else if (state.pane === "settings") {
+    detail = `<div class="d-hd"><h2>Settings</h2><div class="sub">${esc(SETTINGS.version)}</div></div>
+      <div class="d-body">${settingsPane()}</div>`;
+  } else if (state.pane === "categories") {
+    detail = `<div class="d-hd"><h2>Categories</h2><div class="sub">reserved</div></div><div class="d-body">${catStub()}</div>`;
+  } else {
+    detail = `<div class="d-hd"><h2>History</h2><div class="sub">${RANGES[state.range].label} · grouped by day</div></div>
+      <div class="d-body">${historyPane()}</div>`;
+  }
+
+  return `<div class="popover">
+    <div class="c-wrap">
+      <div class="rail">
+        <div class="app-name">Watch<span class="dot">·</span>Logs</div>
+        <button class="range-btn" data-cal-open>
+          <span class="rb-label">${RANGES[state.range].label}</span>
+          <span class="rb-res">${esc(rangeResolved())}</span>
+        </button>
+        ${state.calOpen ? monthGrid("top:96px;left:10px") : ""}
+        <nav>
+          ${navBtn("history", "≣", "History")}
+          ${navBtn("services", "▤", "By Service")}
+          ${navBtn("categories", "◈", "Categories", { locked: true })}
+          ${navBtn("settings", "⚙", "Settings")}
+        </nav>
+        <div class="rail-foot">560×640 · fixed</div>
+      </div>
+      <div class="detail">${detail}</div>
+    </div>
+  </div>`;
+}
+
+/* ============================================================================
+   RENDER + EVENTS
+   ========================================================================== */
+
+function render() {
+  document.body.className = "variant-" + state.variant;
+  const stage = $("#stage");
+  stage.innerHTML = state.variant === "A" ? renderA() : state.variant === "B" ? renderB() : renderC();
+
+  const size = state.variant === "A" ? "360 × 520 · fixed"
+    : state.variant === "B" ? `${state.popW} × ${state.popH} · resizable`
+    : "560 × 640 · fixed";
+  $("#readout").textContent = `variant ${state.variant}  ·  ${size}  ·  range=${state.range}  ·  pane=${state.pane}`;
+
+  renderSwitcher();
+}
+
+const VARIANT_NAMES = { A: "Compact tabbed", B: "Single scroll", C: "Master / detail" };
+function renderSwitcher() {
+  $("#switcher").innerHTML = `
+    <button data-cycle="-1">‹</button>
+    <span class="label"><b>${state.variant}</b><span>${VARIANT_NAMES[state.variant]}</span></span>
+    <button data-cycle="1">›</button>`;
+}
+
+function setVariant(v) {
+  state.variant = v;
+  if (v === "B" && state.pane === "settings") state.pane = "history";
+  const url = new URL(location.href);
+  url.searchParams.set("variant", v);
+  history.replaceState(null, "", url);
+  render();
+}
+
+function cycle(dir) {
+  const order = ["A", "B", "C"];
+  const i = (order.indexOf(state.variant) + dir + 3) % 3;
+  setVariant(order[i]);
+}
+
+function pickRange(k) {
+  if (k === "custom") {
+    state.range = "custom";
+    state.calOpen = true;
+    render();
+    return;
+  }
+  state.range = k;
+  state.calOpen = false;
+  render();
+}
+
+function applyCustom() {
+  state.calOpen = false;
+  state.computing = true;
+  render();
+  setTimeout(() => { state.computing = false; render(); }, 450); // fake aggregation spinner
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-cycle],[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-cal-open],[data-so-open],[data-so-close],[data-toggle-login],[data-day]");
+  if (!t) {
+    // click outside the calendar closes it
+    if (state.calOpen && !e.target.closest(".cal") && !e.target.closest(".range-seg") && !e.target.closest(".range-btn")) {
+      state.calOpen = false; render();
+    }
+    return;
+  }
+
+  if (t.dataset.cycle) return cycle(+t.dataset.cycle);
+  if (t.dataset.range) return pickRange(t.dataset.range);
+  if (t.dataset.calOpen !== undefined) { state.calOpen = !state.calOpen; return render(); }
+
+  if (t.dataset.pane) {
+    state.pane = t.dataset.pane;
+    return render();
+  }
+  if (t.dataset.dayToggle) {
+    const id = t.dataset.dayToggle;
+    state.collapsed[id] = !state.collapsed[id];
+    return render();
+  }
+  if (t.dataset.svcToggle) {
+    state.ytExpanded = !state.ytExpanded;
+    return render();
+  }
+  if (t.dataset.soOpen !== undefined) { state.soOpen = true; return render(); }
+  if (t.dataset.soClose !== undefined) { state.soOpen = false; return render(); }
+  if (t.dataset.toggleLogin !== undefined) { SETTINGS.launchAtLogin = !SETTINGS.launchAtLogin; return render(); }
+
+  if (t.dataset.cal) {
+    if (t.dataset.cal === "prev") { state.calMonth--; if (state.calMonth < 0) { state.calMonth = 11; state.calYear--; } }
+    if (t.dataset.cal === "next") { state.calMonth++; if (state.calMonth > 11) { state.calMonth = 0; state.calYear++; } }
+    if (t.dataset.cal === "apply") return applyCustom();
+    return render();
+  }
+  if (t.dataset.day) {
+    const d = new Date(state.calYear, state.calMonth, +t.dataset.day);
+    if (!state.customStart || (state.customStart && state.customEnd)) {
+      state.customStart = d; state.customEnd = null;
+    } else if (d < state.customStart) {
+      state.customEnd = state.customStart; state.customStart = d;
+    } else {
+      state.customEnd = d;
+    }
+    state.range = "custom";
+    return render();
+  }
+});
+
+// drag-resize for variant B
+let resizing = null;
+document.addEventListener("mousedown", (e) => {
+  const h = e.target.closest("[data-resize]");
+  if (!h) return;
+  resizing = { x: e.clientX, y: e.clientY, w: state.popW, h: state.popH };
+  e.preventDefault();
+});
+document.addEventListener("mousemove", (e) => {
+  if (!resizing) return;
+  state.popW = Math.max(320, Math.min(640, resizing.w + (e.clientX - resizing.x)));
+  state.popH = Math.max(360, Math.min(760, resizing.h + (e.clientY - resizing.y)));
+  render();
+});
+document.addEventListener("mouseup", () => { resizing = null; });
+
+// keyboard: arrows cycle variants (not while typing)
+document.addEventListener("keydown", (e) => {
+  const ae = document.activeElement || document.body;
+  const tag = ae.tagName || "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || ae.isContentEditable) return;
+  if (e.key === "ArrowLeft") cycle(-1);
+  if (e.key === "ArrowRight") cycle(1);
+});
+
+// boot from ?variant=
+const boot = new URL(location.href).searchParams.get("variant");
+if (boot && ["A", "B", "C"].includes(boot.toUpperCase())) state.variant = boot.toUpperCase();
+render();
+</script>
+</body>
+</html>
