@@ -12,11 +12,11 @@ struct LoopbackServerTests {
     static func makeService(
         clock: Clock = SystemClock(),
         basePort: Int? = nil
-    ) throws -> (service: LoopbackService, client: RawHTTPClient, sink: InMemoryEventSink) {
+    ) throws -> (service: LoopbackTransport, client: RawHTTPClient, sink: InMemoryEventSink) {
         let sink = InMemoryEventSink()
         let port = basePort ?? Int.random(in: 49_200..<52_000)
         let config = LoopbackServer.Config(version: "0.1.0", defaultPort: port)
-        let service = try LoopbackService(
+        let service = try LoopbackTransport(
             version: "0.1.0",
             tokenStore: InMemoryTokenStore(),
             clock: clock,
@@ -24,7 +24,7 @@ struct LoopbackServerTests {
             config: config
         )
         try service.start()
-        let client = RawHTTPClient(host: "127.0.0.1", port: try #require(service.server.boundPort))
+        let client = RawHTTPClient(host: "127.0.0.1", port: try #require(service.boundPort))
         return (service, client, sink)
     }
 
@@ -36,7 +36,7 @@ struct LoopbackServerTests {
         """#.utf8)
     }
 
-    func bearer(_ service: LoopbackService) -> [String: String] {
+    func bearer(_ service: LoopbackTransport) -> [String: String] {
         ["Authorization": "Bearer \(service.pairing().token)", "Content-Type": "application/json"]
     }
 
@@ -206,10 +206,12 @@ struct LoopbackServerTests {
         #expect(response.status == 200)
     }
 
-    // MARK: - Idempotency (ADR 0002)
+    // MARK: - At-least-once (ADR 0002)
 
-    @Test("re-sending a Flush with the same flushId replays the same Ack and stores nothing extra")
-    func duplicateFlushIdReplaysAck() throws {
+    @Test("re-sending a Flush with the same flushId is accepted again — no front-door de-dup")
+    func resentFlushIsAcceptedAgain() throws {
+        // ADR 0002: the App keeps no memory of Flushes it has seen. A resend is
+        // processed and acked again; a heartbeat carries nothing to double-count.
         let (service, client, sink) = try Self.makeService()
         defer { service.stop() }
 
@@ -225,8 +227,10 @@ struct LoopbackServerTests {
 
         #expect(first.status == 200)
         #expect(second.status == 200)
-        #expect(first.body == second.body) // identical Ack, serverTime included
-        #expect(sink.appendCalls == 1)
+        #expect(first.json()?["flushId"] as? String == flushId)
+        #expect(second.json()?["flushId"] as? String == flushId)
+        #expect(second.json()?["accepted"] as? Bool == true)
+        #expect(sink.appendCalls == 2)
     }
 
     // MARK: - Regenerate
@@ -263,7 +267,7 @@ struct LoopbackServerTests {
 
         let decoded = try PairingCodec.decode(service.pairingString())
         #expect(decoded.host == "127.0.0.1")
-        #expect(decoded.port == service.server.boundPort)
+        #expect(decoded.port == service.boundPort)
         #expect(Token(base64: decoded.token) != nil)
     }
 

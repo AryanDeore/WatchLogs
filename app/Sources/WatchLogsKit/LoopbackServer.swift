@@ -9,30 +9,18 @@ import Network
 /// lock-guarded, so there is genuinely one request in flight at a time.
 public final class LoopbackServer: @unchecked Sendable {
     public struct Config: Sendable {
-        public var appName: String
         public var version: String
-        public var contract: String
         public var defaultPort: Int
         public var portRollAttempts: Int
-        public var maxBodyBytes: Int
-        public var headerSectionCap: Int
 
         public init(
             version: String,
-            appName: String = LoopbackDefaults.appName,
-            contract: String = LoopbackDefaults.contract,
             defaultPort: Int = LoopbackDefaults.port,
-            portRollAttempts: Int = LoopbackDefaults.portRollAttempts,
-            maxBodyBytes: Int = LoopbackDefaults.maxBodyBytes,
-            headerSectionCap: Int = LoopbackDefaults.headerSectionCap
+            portRollAttempts: Int = LoopbackDefaults.portRollAttempts
         ) {
             self.version = version
-            self.appName = appName
-            self.contract = contract
             self.defaultPort = defaultPort
             self.portRollAttempts = portRollAttempts
-            self.maxBodyBytes = maxBodyBytes
-            self.headerSectionCap = headerSectionCap
         }
     }
 
@@ -45,10 +33,9 @@ public final class LoopbackServer: @unchecked Sendable {
     private let ingest: Ingest
     private let queue = DispatchQueue(label: "com.watchlogs.loopback")
 
-    private let lock = NSLock()
-    private var listener: NWListener?
-    private var _boundPort: Int?
-    private var _bodyBytesRead = 0
+    private let listener = Locked<NWListener?>(nil)
+    private let _boundPort = Locked<Int?>(nil)
+    private let _bodyBytesRead = Locked<Int>(0)
 
     public init(config: Config, tokenProvider: @escaping @Sendable () -> Data, ingest: Ingest) {
         self.config = config
@@ -57,18 +44,13 @@ public final class LoopbackServer: @unchecked Sendable {
     }
 
     /// The port actually bound, once `start()` has succeeded.
-    public var boundPort: Int? {
-        lock.lock(); defer { lock.unlock() }
-        return _boundPort
-    }
+    public var boundPort: Int? { _boundPort.current }
 
-    /// Total request-body bytes the server has pulled off the socket for
-    /// processing. A request rejected before its body (bad token, oversized
-    /// `Content-Length`) contributes nothing. Test observability.
-    public var bodyBytesRead: Int {
-        lock.lock(); defer { lock.unlock() }
-        return _bodyBytesRead
-    }
+    /// Request-body bytes pulled off the socket for processing so far. A request
+    /// rejected before its body — bad token, oversized `Content-Length` — adds
+    /// nothing, which is how the "401 before the body is read" behaviour is
+    /// observed.
+    public var bodyBytesRead: Int { _bodyBytesRead.current }
 
     public var maxObservedIngestConcurrency: Int { ingest.maxObservedConcurrency }
 
@@ -76,7 +58,7 @@ public final class LoopbackServer: @unchecked Sendable {
         for offset in 0..<config.portRollAttempts {
             let port = config.defaultPort + offset
             if bind(port: port) {
-                lock.lock(); _boundPort = port; lock.unlock()
+                _boundPort.set(port)
                 return
             }
         }
@@ -84,11 +66,9 @@ public final class LoopbackServer: @unchecked Sendable {
     }
 
     public func stop() {
-        lock.lock()
-        let current = listener
-        listener = nil
-        _boundPort = nil
-        lock.unlock()
+        let current = listener.current
+        listener.set(nil)
+        _boundPort.set(nil)
         current?.cancel()
     }
 
@@ -103,13 +83,13 @@ public final class LoopbackServer: @unchecked Sendable {
         guard let candidate = try? NWListener(using: parameters) else { return false }
 
         let ready = DispatchSemaphore(value: 0)
-        let outcome = BindOutcome()
+        let didBind = Locked<Bool>(false)
         candidate.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                outcome.set(true); ready.signal()
+                didBind.set(true); ready.signal()
             case .failed, .cancelled:
-                outcome.set(false); ready.signal()
+                didBind.set(false); ready.signal()
             default:
                 break
             }
@@ -119,11 +99,11 @@ public final class LoopbackServer: @unchecked Sendable {
         }
         candidate.start(queue: queue)
 
-        if ready.wait(timeout: .now() + 3) == .timedOut || !outcome.value {
+        if ready.wait(timeout: .now() + 3) == .timedOut || !didBind.current {
             candidate.cancel()
             return false
         }
-        lock.lock(); listener = candidate; lock.unlock()
+        listener.set(candidate)
         return true
     }
 
@@ -148,7 +128,7 @@ public final class LoopbackServer: @unchecked Sendable {
             do {
                 if let (head, bodyOffset) = try HTTPRequestParser.parseHead(
                     from: accumulated,
-                    headerSectionCap: self.config.headerSectionCap
+                    headerSectionCap: LoopbackDefaults.headerSectionCap
                 ) {
                     let pending = Data(accumulated[(accumulated.startIndex + bodyOffset)...])
                     self.route(head: head, alreadyBuffered: pending, on: connection)
@@ -178,9 +158,9 @@ public final class LoopbackServer: @unchecked Sendable {
 
         case ("GET", "/v1/ping"):
             respond(.json(status: 200, [
-                "app": config.appName,
+                "app": LoopbackDefaults.appName,
                 "version": config.version,
-                "contract": config.contract,
+                "contract": LoopbackDefaults.contract,
             ]), on: connection)
 
         case ("POST", "/v1/flush"):
@@ -197,13 +177,13 @@ public final class LoopbackServer: @unchecked Sendable {
                 respond(.json(status: 411, ["error": "length required"]), on: connection)
                 return
             }
-            guard contentLength <= config.maxBodyBytes else {
+            guard contentLength <= LoopbackDefaults.maxBodyBytes else {
                 respond(.json(status: 413, ["error": "too large"]), on: connection)
                 return
             }
             readBody(on: connection, have: alreadyBuffered, need: contentLength) { [weak self] body in
                 guard let self else { return }
-                self.lock.lock(); self._bodyBytesRead += body.count; self.lock.unlock()
+                self._bodyBytesRead.withLock { $0 += body.count }
 
                 switch self.ingest.handle(body: body) {
                 case .accepted(let ack):
@@ -254,13 +234,13 @@ public final class LoopbackServer: @unchecked Sendable {
 
     private func isAuthorized(_ head: RequestHead) -> Bool {
         let real = Data(tokenProvider().base64EncodedString().utf8)
-        guard let value = head.header("authorization") else {
-            _ = constantTimeEquals(real, real) // keep the failure path's timing shape similar
-            return false
-        }
         let scheme = "Bearer "
-        guard value.hasPrefix(scheme) else { return false }
-        let presented = Data(value.dropFirst(scheme.count).utf8)
+        let presented: Data
+        if let value = head.header("authorization"), value.hasPrefix(scheme) {
+            presented = Data(value.dropFirst(scheme.count).utf8)
+        } else {
+            presented = Data()
+        }
         return constantTimeEquals(presented, real)
     }
 
@@ -270,19 +250,5 @@ public final class LoopbackServer: @unchecked Sendable {
         connection.send(content: response.serialized(), completion: .contentProcessed { _ in
             connection.cancel()
         })
-    }
-}
-
-/// Thread-safe one-shot flag for the bind handshake.
-private final class BindOutcome: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _value = false
-    func set(_ newValue: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        _value = newValue
-    }
-    var value: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return _value
     }
 }

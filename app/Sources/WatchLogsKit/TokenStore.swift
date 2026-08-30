@@ -31,26 +31,14 @@ extension TokenStore {
     }
 }
 
-public final class InMemoryTokenStore: TokenStore, @unchecked Sendable {
-    private let lock = NSLock()
-    private var token: Token?
+public final class InMemoryTokenStore: TokenStore {
+    private let token: Locked<Token?>
 
     public init(token: Token? = nil) {
-        self.token = token
+        self.token = Locked(token)
     }
 
-    public func load() throws -> Token? {
-        lock.lock(); defer { lock.unlock() }
-        return token
-    }
-
-    public func save(_ token: Token) throws {
-        lock.lock(); defer { lock.unlock() }
-        self.token = token
-    }
-
-    public func clear() throws {
-        lock.lock(); defer { lock.unlock() }
-        token = nil
-    }
+    public func load() throws -> Token? { token.current }
+    public func save(_ token: Token) throws { self.token.set(token) }
+    public func clear() throws { token.set(nil) }
 }

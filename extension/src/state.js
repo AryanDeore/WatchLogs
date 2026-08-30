@@ -1,5 +1,5 @@
-// The single connection-state value the popup and menubar-equivalent read.
-// Pure reducer over "what just happened"; storage I/O lives in background.js.
+// The single connection-state value the popup and the App's menubar echo. Pure
+// reducer over "what just happened"; storage I/O lives in background.js.
 
 /**
  * @typedef {(
@@ -28,12 +28,8 @@ export function reduce(_previous, decision, now) {
       };
     case "re-pair":
       return { status: "needs-pairing", reason: "unauthorized", at: now };
-    case "keep-buffered":
-      return { status: "disconnected", reason: "schemaVersion", at: now };
-    case "drop":
-      return { status: "disconnected", reason: "rejected", at: now };
     default:
-      return { status: "disconnected", reason: "no-response", at: now };
+      return { status: "disconnected", reason: decision.reason ?? "no-response", at: now };
   }
 }
 

@@ -1,8 +1,12 @@
 import Foundation
 
-/// Turns a raw request body into an `IngestOutcome`. This is where the
-/// at-least-once contract (ADR 0002) starts: a duplicate `flushId` replays its
-/// stored Ack and stores nothing extra.
+/// Turns a raw request body into an `IngestOutcome`.
+///
+/// Delivery is **at-least-once** (ADR 0002): the App keeps no memory of Flushes
+/// it has already seen. A resent Flush is simply processed again and acked again;
+/// downstream de-duplication on stable Event ids (slice 2) is what keeps a
+/// re-delivered batch from inflating anything. For a `views: []` heartbeat a
+/// resend stores nothing either way.
 ///
 /// Lock-guarded rather than an `actor` so the loopback server can call it
 /// synchronously and keep "one request in flight at a time" literally true —
@@ -12,28 +16,36 @@ public final class Ingest: @unchecked Sendable {
     private let sink: EventSink
     private let onAccepted: (@Sendable () -> Void)?
     private let lock = NSLock()
-    private var seenFlushes: [String: Ack] = [:]
 
-    /// Widens the critical section in tests so the "concurrent Flushes are
-    /// serialised" assertion has a real race to catch. Zero in production.
-    private let artificialWork: TimeInterval
+    /// Widens the critical section so the "concurrent Flushes are serialised"
+    /// test has a real race to catch. Zero in production; only the internal
+    /// initializer takes it.
+    private let criticalSectionPadding: TimeInterval
 
-    /// Test observability: the most concurrent `handle` calls ever seen inside
-    /// the critical section. Must never exceed 1.
     private let concurrencyProbe = ConcurrencyProbe()
 
-    public init(
+    public convenience init(
         clock: Clock,
         sink: EventSink,
-        artificialWork: TimeInterval = 0,
+        onAccepted: (@Sendable () -> Void)? = nil
+    ) {
+        self.init(clock: clock, sink: sink, criticalSectionPadding: 0, onAccepted: onAccepted)
+    }
+
+    init(
+        clock: Clock,
+        sink: EventSink,
+        criticalSectionPadding: TimeInterval,
         onAccepted: (@Sendable () -> Void)? = nil
     ) {
         self.clock = clock
         self.sink = sink
-        self.artificialWork = artificialWork
+        self.criticalSectionPadding = criticalSectionPadding
         self.onAccepted = onAccepted
     }
 
+    /// The most concurrent `handle` calls ever seen inside the critical section.
+    /// The one-request-in-flight guarantee means this must never exceed 1.
     public var maxObservedConcurrency: Int { concurrencyProbe.peak }
 
     public func handle(body: Data) -> IngestOutcome {
@@ -42,7 +54,7 @@ public final class Ingest: @unchecked Sendable {
 
         concurrencyProbe.enter()
         defer { concurrencyProbe.leave() }
-        if artificialWork > 0 { Thread.sleep(forTimeInterval: artificialWork) }
+        if criticalSectionPadding > 0 { Thread.sleep(forTimeInterval: criticalSectionPadding) }
 
         switch FlushEnvelopeDecoder.decode(body) {
         case .badRequest(let reason):
@@ -53,19 +65,14 @@ public final class Ingest: @unchecked Sendable {
             return .unsupportedSchemaVersion
 
         case .ok(let envelope):
-            if let replayed = seenFlushes[envelope.flushId] {
-                onAccepted?()
-                return .accepted(replayed)
-            }
             try? sink.append(flushId: envelope.flushId, views: envelope.views)
             let ack = Ack(
                 flushId: envelope.flushId,
-                views: envelope.views.map { view in
-                    Ack.ViewAck(viewId: view.viewId, ackSeq: view.events.map(\.seq).max() ?? 0)
-                },
+                // Heartbeat views are empty; per-View ackSeq lands with Segment
+                // computation (slice 2).
+                views: envelope.views.map { Ack.ViewAck(viewId: $0.viewId, ackSeq: 0) },
                 serverTime: clock.now().epochMillis
             )
-            seenFlushes[envelope.flushId] = ack
             onAccepted?()
             return .accepted(ack)
         }

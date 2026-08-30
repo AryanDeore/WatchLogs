@@ -24,44 +24,9 @@ export function buildHeartbeat({ flushId, sentAt, agent }) {
 }
 
 /**
- * @typedef {(
- *   | { outcome: "accepted", ack: unknown }
- *   | { outcome: "re-pair" }
- *   | { outcome: "keep-buffered" }
- *   | { outcome: "drop" }
- *   | { outcome: "retry" }
- * )} FlushDecision
- */
-
-/**
- * Map an HTTP status from `POST /v1/flush` onto what the extension should do,
- * per the system spec's failure table (#20):
- *   200 accepted · 400 drop · 401 stop + re-pair · 413 split + retry ·
- *   415 keep buffered (App can't parse this schema) · else keep + retry.
+ * Is `ack` a well-formed Ack `{flushId, accepted:true, views:[], serverTime}`
+ * for the Flush we just sent?
  *
- * @param {number} status
- * @param {unknown} body  parsed JSON body, or null
- * @returns {FlushDecision}
- */
-export function interpretFlushResponse(status, body) {
-  switch (status) {
-    case 200:
-      return { outcome: "accepted", ack: body };
-    case 400:
-      return { outcome: "drop" };
-    case 401:
-      return { outcome: "re-pair" };
-    case 415:
-      return { outcome: "keep-buffered" };
-    default:
-      // 413 (would split a real batch; a heartbeat can't), 500, timeouts,
-      // connection-refused — keep the batch and try again later.
-      return { outcome: "retry" };
-  }
-}
-
-/**
- * Validate the shape of an Ack `{flushId, accepted, views, serverTime}`.
  * @param {unknown} ack
  * @param {string} expectedFlushId
  * @returns {boolean}
@@ -75,4 +40,35 @@ export function isWellFormedAck(ack, expectedFlushId) {
     Array.isArray(ack.views) &&
     Number.isFinite(ack.serverTime)
   );
+}
+
+/**
+ * @typedef {(
+ *   | { outcome: "accepted", ack: object }
+ *   | { outcome: "re-pair" }
+ *   | { outcome: "retry", reason: string }
+ * )} FlushDecision
+ */
+
+/**
+ * Map a `POST /v1/flush` result onto what the extension should do. Issue #26
+ * defines only two outcomes for the extension — a `200` with a valid Ack, and a
+ * `401` — so everything else (a lost response, any other status, a `200` whose
+ * body isn't a valid Ack) is "keep the heartbeat cadence and try again".
+ *
+ * @param {number} status  HTTP status, or 0 if the request never completed
+ * @param {unknown} body   parsed JSON body, or null
+ * @param {string} expectedFlushId
+ * @returns {FlushDecision}
+ */
+export function interpretFlushResponse(status, body, expectedFlushId) {
+  if (status === 200) {
+    return isWellFormedAck(body, expectedFlushId)
+      ? { outcome: "accepted", ack: body }
+      : { outcome: "retry", reason: "malformed-ack" };
+  }
+  if (status === 401) {
+    return { outcome: "re-pair" };
+  }
+  return { outcome: "retry", reason: status === 0 ? "no-response" : `status-${status}` };
 }

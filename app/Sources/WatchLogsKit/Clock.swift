@@ -13,28 +13,20 @@ public struct SystemClock: Clock {
 }
 
 /// A clock the tests advance by hand.
-public final class ManualClock: Clock, @unchecked Sendable {
-    private let lock = NSLock()
-    private var current: Date
+public final class ManualClock: Clock {
+    private let time: Locked<Date>
 
     public init(_ start: Date = Date(timeIntervalSince1970: 1_700_000_000)) {
-        self.current = start
+        self.time = Locked(start)
     }
 
-    public func now() -> Date {
-        lock.lock(); defer { lock.unlock() }
-        return current
-    }
+    public func now() -> Date { time.current }
 
     public func advance(by interval: TimeInterval) {
-        lock.lock(); defer { lock.unlock() }
-        current = current.addingTimeInterval(interval)
+        time.withLock { $0 = $0.addingTimeInterval(interval) }
     }
 
-    public func set(_ date: Date) {
-        lock.lock(); defer { lock.unlock() }
-        current = date
-    }
+    public func set(_ date: Date) { time.set(date) }
 }
 
 extension Date {

@@ -18,9 +18,9 @@ Flush on a timer, process the Ack, and drop to a "re-pair" state on `401`.
 | File | Role |
 |---|---|
 | `manifest.json` | MV3; `storage` + `alarms` permissions, `http://127.0.0.1/*` host permission (the CORS exemption) |
-| `background.js` | service worker: heartbeat timer, `POST /v1/flush`, Ack handling, `401` → clear alarm + re-pair state |
+| `background.js` | service worker: heartbeat timer, `POST /v1/flush`, Ack handling; `401` → stop timers, forget the pairing, re-pair state |
 | `src/pairing.js` | pure: parse / encode the base64 pairing string |
-| `src/flush.js` | pure: build the heartbeat envelope, map an HTTP status to an action |
+| `src/flush.js` | pure: build the heartbeat envelope, validate the Ack, decide accept / re-pair / retry |
 | `src/state.js` | pure: connection-state reducer + one-line summary |
 | `options.html` / `options.js` | paste + pair, pings `/v1/ping` before storing |
 | `popup.html` / `popup.js` | shows the current connection line |

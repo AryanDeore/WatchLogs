@@ -10,22 +10,22 @@ struct PortRollAndConcurrencyTests {
 
         // Occupy the default port with a first service.
         let firstConfig = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort)
-        let first = try LoopbackService(
+        let first = try LoopbackTransport(
             version: "0.1.0", tokenStore: InMemoryTokenStore(), config: firstConfig
         )
         try first.start()
         defer { first.stop() }
-        #expect(first.server.boundPort == basePort)
+        #expect(first.boundPort == basePort)
 
         // A second service asked for the same default port must land elsewhere.
         let secondConfig = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort)
-        let second = try LoopbackService(
+        let second = try LoopbackTransport(
             version: "0.1.0", tokenStore: InMemoryTokenStore(), config: secondConfig
         )
         try second.start()
         defer { second.stop() }
 
-        let boundPort = try #require(second.server.boundPort)
+        let boundPort = try #require(second.boundPort)
         #expect(boundPort != basePort)
         #expect(boundPort > basePort)
 
@@ -43,11 +43,11 @@ struct PortRollAndConcurrencyTests {
         let basePort = Int.random(in: 49_200..<52_000)
         let config = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort, portRollAttempts: 1)
 
-        let holder = try LoopbackService(version: "0.1.0", tokenStore: InMemoryTokenStore(), config: config)
+        let holder = try LoopbackTransport(version: "0.1.0", tokenStore: InMemoryTokenStore(), config: config)
         try holder.start()
         defer { holder.stop() }
 
-        let blocked = try LoopbackService(version: "0.1.0", tokenStore: InMemoryTokenStore(), config: config)
+        let blocked = try LoopbackTransport(version: "0.1.0", tokenStore: InMemoryTokenStore(), config: config)
         #expect(throws: LoopbackServer.StartError.self) {
             try blocked.start()
         }
@@ -59,7 +59,7 @@ struct PortRollAndConcurrencyTests {
         let basePort = Int.random(in: 49_200..<52_000)
         let config = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort)
         // Widen the ingest critical section so a real race would be caught.
-        let ingest = Ingest(clock: SystemClock(), sink: sink, artificialWork: 0.03)
+        let ingest = Ingest(clock: SystemClock(), sink: sink, criticalSectionPadding: 0.03)
         let tokenStore = InMemoryTokenStore(token: Token.generate())
         let token = try #require(try tokenStore.load())
         let server = LoopbackServer(config: config, tokenProvider: { token.raw }, ingest: ingest)

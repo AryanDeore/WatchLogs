@@ -54,19 +54,10 @@ public enum PairingCodec {
         guard let portValue = object["port"] else {
             throw PairingStringError.missingField("port")
         }
-        guard let port = portAsInt(portValue), (1...65535).contains(port) else {
+        guard let port = JSONNumber.whole(portValue), (1...65535).contains(port) else {
             throw PairingStringError.invalidPort
         }
         return Pairing(host: host, port: port, token: token)
-    }
-
-    private static func portAsInt(_ value: Any) -> Int? {
-        if let number = value as? NSNumber {
-            // Reject a fractional port like 8080.5.
-            let intValue = number.intValue
-            return Double(intValue) == number.doubleValue ? intValue : nil
-        }
-        return nil
     }
 
     private static func jsonString(_ value: String) -> String {

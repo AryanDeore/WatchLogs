@@ -3,9 +3,9 @@ import Foundation
 /// The Flush wire schema (v1), from `prototypes/message-schema/SCHEMA.md`.
 ///
 /// Issue #26 only exercises the heartbeat — an envelope whose `views` array is
-/// empty — so the per-View shape here is deliberately permissive: enough to
-/// accept and echo a populated Flush, not the full validation that lands with
-/// Segment computation (slice 2).
+/// empty. Per-View events, `seq` numbering, and per-View `ackSeq` are Segment
+/// computation's concern (slice 2); this decoder validates the envelope and the
+/// `viewId` of each View, nothing deeper.
 public struct FlushEnvelope: Sendable {
     public var schemaVersion: Int
     public var flushId: String
@@ -21,15 +21,9 @@ public struct FlushEnvelope: Sendable {
     }
 }
 
-/// A View inside a Flush. Only `viewId` and `events` are read this slice; the
-/// rest is carried through untouched.
+/// A View inside a Flush. Only `viewId` is read this slice.
 public struct FlushView: Sendable {
     public var viewId: String
-    public var events: [FlushEvent]
-
-    public struct FlushEvent: Sendable {
-        public var seq: Int
-    }
 }
 
 /// The outcome of handing a raw request body to `Ingest`.
@@ -67,7 +61,7 @@ enum FlushEnvelopeDecoder {
         guard let schemaValue = object["schemaVersion"] else {
             return .badRequest("missing schemaVersion")
         }
-        guard let schemaVersion = wholeNumber(schemaValue) else {
+        guard let schemaVersion = JSONNumber.whole(schemaValue) else {
             return .badRequest("schemaVersion must be an integer")
         }
         guard schemaVersion == supportedSchemaVersion else {
@@ -77,7 +71,7 @@ enum FlushEnvelopeDecoder {
         guard let flushId = object["flushId"] as? String, !flushId.isEmpty else {
             return .badRequest("missing flushId")
         }
-        guard let sentAtValue = object["sentAt"], let sentAt = wholeNumber(sentAtValue) else {
+        guard let sentAtValue = object["sentAt"], let sentAt = JSONNumber.whole(sentAtValue) else {
             return .badRequest("missing sentAt")
         }
         guard
@@ -93,18 +87,14 @@ enum FlushEnvelopeDecoder {
         var views: [FlushView] = []
         views.reserveCapacity(viewsArray.count)
         for element in viewsArray {
-            guard let viewObject = element as? [String: Any] else {
-                return .badRequest("view is not an object")
-            }
-            guard let viewId = viewObject["viewId"] as? String, !viewId.isEmpty else {
+            guard
+                let viewObject = element as? [String: Any],
+                let viewId = viewObject["viewId"] as? String,
+                !viewId.isEmpty
+            else {
                 return .badRequest("view missing viewId")
             }
-            let events: [FlushView.FlushEvent] = (viewObject["events"] as? [Any] ?? []).compactMap { raw in
-                guard let eventObject = raw as? [String: Any],
-                      let seqValue = eventObject["seq"], let seq = wholeNumber(seqValue) else { return nil }
-                return FlushView.FlushEvent(seq: seq)
-            }
-            views.append(FlushView(viewId: viewId, events: events))
+            views.append(FlushView(viewId: viewId))
         }
 
         return .ok(FlushEnvelope(
@@ -129,14 +119,5 @@ enum FlushEnvelopeDecoder {
             browser: browser,
             os: os
         )
-    }
-
-    /// A JSON number that is an exact integer (rejects `1.5`, accepts `1` / `1.0`).
-    private static func wholeNumber(_ value: Any) -> Int? {
-        guard let number = value as? NSNumber else { return nil }
-        // NSNumber wrapping a bool must not count as a number here.
-        if CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
-        let intValue = number.intValue
-        return Double(intValue) == number.doubleValue ? intValue : nil
     }
 }

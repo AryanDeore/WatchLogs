@@ -10,9 +10,10 @@ computation yet.
 swift run WatchLogs
 ```
 
-A menubar item appears (`Watch·Logs ○` / `●`). Its menu shows the status line,
-the bound port, **Copy Pairing String**, and **Regenerate Token**. The token
-lives in the macOS Keychain (`com.watchlogs.app` / `loopback-token`).
+A menubar item appears (`Watch·Logs ○` / `●`). Its menu shows the single status
+line, plus **Pairing String…** (displays the base64 string with a Copy button)
+and **Regenerate Token**. The token lives in the macOS Keychain
+(`com.watchlogs.app` / `loopback-token`).
 
 ## Wire surface
 
@@ -23,14 +24,15 @@ lives in the macOS Keychain (`com.watchlogs.app` / `loopback-token`).
 | `OPTIONS /v1/flush` | none | `204`, **no** `Access-Control-Allow-*` headers |
 
 Binds `127.0.0.1:48920`, rolling forward to the next free port on collision. One
-request in flight at a time. JSON only, plain HTTP. A duplicate `flushId` replays
-its stored Ack (ADR 0002).
+request in flight at a time. JSON only, plain HTTP. Delivery is at-least-once
+(ADR 0002): the App keeps no memory of Flushes it has seen, so a resent Flush is
+simply acked again.
 
 ## Layout
 
 | Target | Contents |
 |---|---|
-| `WatchLogsKit` | `LoopbackServer` (NWListener), `HTTPMessage` (parser), `Ingest` + `FlushEnvelope`, `PairingCodec`, `Token` + `TokenStore` / `KeychainTokenStore`, `MenubarStatus`, `Clock`, `LoopbackService` (wires them) |
+| `WatchLogsKit` | `LoopbackServer` (NWListener), `HTTPMessage` (parser), `Ingest` + `FlushEnvelope`, `PairingCodec`, `Token` + `TokenStore` / `KeychainTokenStore`, `MenubarStatus`, `Clock`, `LoopbackTransport` (wires them) |
 | `WatchLogs` | the AppKit `NSStatusItem` executable |
 | `WatchLogsKitTests` | Swift Testing; drives the real server over a raw socket (`RawHTTPClient`) |
 

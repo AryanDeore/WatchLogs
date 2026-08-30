@@ -1,5 +1,6 @@
 // Service worker: hold the pairing string, post an empty-`views` heartbeat on a
-// timer, process the Ack, and drop to a "re-pair" state on 401 (issue #26).
+// timer, process the Ack, and — on a 401 — stop and drop to a "re-pair" state
+// (issue #26).
 
 import { parsePairingString, baseUrl } from "./src/pairing.js";
 import { buildHeartbeat, interpretFlushResponse } from "./src/flush.js";
@@ -11,15 +12,17 @@ const INSTANCE_KEY = "extInstanceId";
 const HEARTBEAT_ALARM = "watchlogs-heartbeat";
 const HEARTBEAT_MS = 5000;
 
-// --- Timers -----------------------------------------------------------------
+// --- Timers ------------------------------------------------------------------
+
+let fastTimer = startFastTimer();
 
 chrome.runtime.onInstalled.addListener(() => {
-  ensureAlarm();
+  ensureTimers();
   void flushHeartbeat();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  ensureAlarm();
+  ensureTimers();
   void flushHeartbeat();
 });
 
@@ -27,21 +30,30 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === HEARTBEAT_ALARM) void flushHeartbeat();
 });
 
-// Fast cadence while the worker is alive; the alarm is the >=1-min backstop.
-setInterval(() => {
-  void flushHeartbeat();
-}, HEARTBEAT_MS);
-
-function ensureAlarm() {
-  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1, delayInMinutes: 0 });
+function startFastTimer() {
+  // Fast cadence while the worker is alive; the alarm is the >=1-min backstop.
+  return setInterval(() => void flushHeartbeat(), HEARTBEAT_MS);
 }
 
-// --- Heartbeat ------------------------------------------------------------------
+function ensureTimers() {
+  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1, delayInMinutes: 0 });
+  fastTimer ??= startFastTimer();
+}
+
+async function stopTimers() {
+  await chrome.alarms.clear(HEARTBEAT_ALARM);
+  if (fastTimer) {
+    clearInterval(fastTimer);
+    fastTimer = null;
+  }
+}
+
+// --- Heartbeat -------------------------------------------------------------------
 
 async function flushHeartbeat() {
   const raw = (await chrome.storage.local.get(PAIRING_KEY))[PAIRING_KEY];
   if (!raw) {
-    await writeState({ status: "needs-pairing" });
+    // Not paired (or un-paired by a 401) — nothing to send.
     return;
   }
 
@@ -74,13 +86,15 @@ async function flushHeartbeat() {
     status = response.status;
     payload = await response.json().catch(() => null);
   } catch {
-    await writeState(reduce(await readState(), { outcome: "retry" }, Date.now()));
-    return;
+    status = 0;
   }
 
-  const decision = interpretFlushResponse(status, payload);
+  const decision = interpretFlushResponse(status, payload, flushId);
   if (decision.outcome === "re-pair") {
-    await chrome.alarms.clear(HEARTBEAT_ALARM);
+    // Stop: kill the timers and forget the pairing so nothing keeps hammering
+    // the App with a dead token. The user must paste a fresh string.
+    await stopTimers();
+    await chrome.storage.local.remove(PAIRING_KEY);
   }
   await writeState(reduce(await readState(), decision, Date.now()));
 }
@@ -119,7 +133,7 @@ async function pair(pairingString) {
   }
 
   await chrome.storage.local.set({ [PAIRING_KEY]: pairingString.trim() });
-  ensureAlarm();
+  ensureTimers();
   await flushHeartbeat();
   return { ok: true };
 }

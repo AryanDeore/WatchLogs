@@ -6,27 +6,29 @@ import WatchLogsKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var service: LoopbackService!
+    private var transport: LoopbackTransport!
     private var refreshTimer: Timer?
 
-    private let flushClock = LastFlushClock()
+    /// When the last Flush landed. Written from the server's background queue,
+    /// read here on the main thread.
+    private let lastFlush = Locked<Date?>(nil)
 
     private static let version = "0.1.0"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        let clock = flushClock
+        let lastFlush = self.lastFlush
         do {
-            service = try LoopbackService(
+            transport = try LoopbackTransport(
                 version: Self.version,
                 tokenStore: KeychainTokenStore(),
                 onFlush: {
-                    clock.mark()
+                    lastFlush.set(Date())
                     Task { @MainActor in AppDelegate.shared?.rebuildMenu() }
                 }
             )
-            try service.start()
+            try transport.start()
         } catch {
             presentFatal("Could not start the WatchLogs server: \(error)")
             return
@@ -44,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
-        service?.stop()
+        transport?.stop()
     }
 
     /// The server's flush callback fires on a background queue; this weak
@@ -53,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static weak var shared: AppDelegate?
 
     private func currentStatus() -> MenubarStatus {
-        MenubarStatus.evaluate(lastFlushAt: flushClock.last, now: Date())
+        MenubarStatus.evaluate(lastFlushAt: lastFlush.current, now: Date())
     }
 
     private func rebuildMenu() {
@@ -64,13 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusRow.isEnabled = false
         menu.addItem(statusRow)
 
-        let boundPort = service.server.boundPort.map(String.init) ?? "—"
-        let portRow = NSMenuItem(title: "Listening on \(LoopbackDefaults.host):\(boundPort)", action: nil, keyEquivalent: "")
-        portRow.isEnabled = false
-        menu.addItem(portRow)
-
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Copy Pairing String", action: #selector(copyPairingString), keyEquivalent: "c"))
+        menu.addItem(NSMenuItem(title: "Pairing String…", action: #selector(showPairingString), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Regenerate Token", action: #selector(regenerateToken), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit WatchLogs", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -87,16 +84,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func copyPairingString() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(service.pairingString(), forType: .string)
+    /// The "Settings" surface for this slice: show the base64 pairing string in a
+    /// selectable field, with a Copy button.
+    @objc private func showPairingString() {
+        let pairingString = transport.pairingString()
+
+        let alert = NSAlert()
+        alert.messageText = "Pairing string"
+        alert.informativeText = "Paste this into the WatchLogs extension's Options to pair."
+        alert.addButton(withTitle: "Copy")
+        alert.addButton(withTitle: "Done")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 48))
+        field.stringValue = pairingString
+        field.isEditable = false
+        field.isSelectable = true
+        field.lineBreakMode = .byCharWrapping
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        alert.accessoryView = field
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            copyToPasteboard(pairingString)
+        }
     }
 
     @objc private func regenerateToken() {
         do {
-            _ = try service.regenerateToken()
-            copyPairingString()
+            let pairingString = try transport.regenerateToken()
+            copyToPasteboard(pairingString)
             let alert = NSAlert()
             alert.messageText = "New pairing string copied"
             alert.informativeText = "The old token no longer works. Paste the new pairing string into the extension."
@@ -106,27 +122,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func copyToPasteboard(_ string: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
+    }
+
     private func presentFatal(_ message: String) {
         let alert = NSAlert()
         alert.messageText = "WatchLogs"
         alert.informativeText = message
         alert.alertStyle = .critical
         alert.runModal()
-    }
-}
-
-/// Thread-safe holder for "when did the last Flush land". Written from the
-/// server's background queue, read on the main thread.
-final class LastFlushClock: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _last: Date?
-
-    func mark() {
-        lock.lock(); _last = Date(); lock.unlock()
-    }
-
-    var last: Date? {
-        lock.lock(); defer { lock.unlock() }
-        return _last
     }
 }

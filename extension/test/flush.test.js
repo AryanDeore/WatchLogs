@@ -15,6 +15,13 @@ const agent = {
   os: "macOS",
 };
 
+const ackFor = (flushId) => ({
+  flushId,
+  accepted: true,
+  views: [],
+  serverTime: 1700000000004,
+});
+
 test("buildHeartbeat produces a schema-v1 envelope with empty views", () => {
   const body = buildHeartbeat({ flushId: "f-1", sentAt: 1700000000000, agent });
   assert.equal(body.schemaVersion, SCHEMA_VERSION);
@@ -24,23 +31,39 @@ test("buildHeartbeat produces a schema-v1 envelope with empty views", () => {
   assert.deepEqual(body.views, []);
 });
 
-test("interpretFlushResponse maps statuses to actions", () => {
-  assert.equal(interpretFlushResponse(200, { accepted: true }).outcome, "accepted");
-  assert.equal(interpretFlushResponse(400, null).outcome, "drop");
-  assert.equal(interpretFlushResponse(401, null).outcome, "re-pair");
-  assert.equal(interpretFlushResponse(415, { error: "schemaVersion" }).outcome, "keep-buffered");
-  assert.equal(interpretFlushResponse(413, null).outcome, "retry");
-  assert.equal(interpretFlushResponse(500, null).outcome, "retry");
-  assert.equal(interpretFlushResponse(0, null).outcome, "retry");
+test("isWellFormedAck checks flushId, accepted, views, serverTime", () => {
+  assert.equal(isWellFormedAck(ackFor("f-1"), "f-1"), true);
+  assert.equal(isWellFormedAck(ackFor("f-1"), "other"), false);
+  assert.equal(isWellFormedAck({ ...ackFor("f-1"), accepted: false }, "f-1"), false);
+  assert.equal(isWellFormedAck({ ...ackFor("f-1"), views: undefined }, "f-1"), false);
+  assert.equal(isWellFormedAck(null, "f-1"), false);
 });
 
-test("isWellFormedAck checks flushId, accepted, views, serverTime", () => {
-  const ack = { flushId: "f-1", accepted: true, views: [], serverTime: 1700000000004 };
-  assert.equal(isWellFormedAck(ack, "f-1"), true);
-  assert.equal(isWellFormedAck(ack, "other"), false);
-  assert.equal(isWellFormedAck({ ...ack, accepted: false }, "f-1"), false);
-  assert.equal(isWellFormedAck({ ...ack, views: undefined }, "f-1"), false);
-  assert.equal(isWellFormedAck(null, "f-1"), false);
+test("a 200 with a valid Ack is accepted", () => {
+  const decision = interpretFlushResponse(200, ackFor("f-1"), "f-1");
+  assert.equal(decision.outcome, "accepted");
+  assert.equal(decision.ack.serverTime, 1700000000004);
+});
+
+test("a 200 whose body is not a valid Ack is a retry, not accepted", () => {
+  assert.deepEqual(interpretFlushResponse(200, { hello: "world" }, "f-1"), {
+    outcome: "retry",
+    reason: "malformed-ack",
+  });
+  assert.deepEqual(interpretFlushResponse(200, ackFor("other-flush"), "f-1"), {
+    outcome: "retry",
+    reason: "malformed-ack",
+  });
+});
+
+test("a 401 is re-pair", () => {
+  assert.deepEqual(interpretFlushResponse(401, null, "f-1"), { outcome: "re-pair" });
+});
+
+test("any other status is a retry with the status in the reason", () => {
+  assert.deepEqual(interpretFlushResponse(0, null, "f-1"), { outcome: "retry", reason: "no-response" });
+  assert.deepEqual(interpretFlushResponse(415, null, "f-1"), { outcome: "retry", reason: "status-415" });
+  assert.deepEqual(interpretFlushResponse(500, null, "f-1"), { outcome: "retry", reason: "status-500" });
 });
 
 test("an accepted Flush moves state to connected", () => {
@@ -57,9 +80,10 @@ test("a 401 moves state to needs-pairing with an unauthorized reason", () => {
   assert.match(summarize(next, 6000), /Re-pair needed/);
 });
 
-test("a lost response moves state to disconnected", () => {
-  const next = reduce({ status: "connected", lastFlushAt: 0 }, { outcome: "retry" }, 9000);
+test("a retry moves state to disconnected, carrying the reason", () => {
+  const next = reduce({ status: "connected", lastFlushAt: 0 }, { outcome: "retry", reason: "status-500" }, 9000);
   assert.equal(next.status, "disconnected");
+  assert.equal(next.reason, "status-500");
   assert.match(summarize(next, 9000), /Disconnected/);
 });
 
