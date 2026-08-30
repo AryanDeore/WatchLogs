@@ -3,18 +3,24 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WatchLogs — Menubar layout prototype (range selector + History / By Service / Settings)</title>
+<title>WatchLogs — Menubar layout prototype (calendar-first, round 2)</title>
 <!--
   PROTOTYPE — throwaway. Answers wayfinder ticket #7 on map #1.
-  Plan: three structurally different menubar-popover layouts on one page,
-  switchable via ?variant=A|B|C and a floating bottom bar. Mock data only,
-  no build, no server. Double-click this file.
+  Mock data only, no build, no server. Double-click this file.
+  Switch layouts: floating bar, arrow keys, or ?variant=A|B|D|E|F
 
-  What the three variants disagree about:
-    A  Compact tabbed     — 360x520, fixed. One pane at a time behind a tab row.
-    B  Single scroll      — 420x600, RESIZABLE. Everything in one scroll;
-                            Settings is a slide-over. Drag the corner handle.
-    C  Master / detail    — 560x640, fixed, window-like. Left nav rail + big pane.
+  ROUND 1 (kept for reference — Aryan liked these, not C):
+    A  Compact tabbed   360x520, range selector as a segmented control in the header
+    B  Single scroll     420x600, resizable, panes stacked, settings slide-over
+
+  ROUND 2 (calendar-first — the month grid IS the entry point, per feedback):
+    D  Almanac    full month always visible, up to 3 service-colour dots per day,
+                  preset chips, tabbed History | By Service below
+    E  Telescope  calendar collapses to a one-row week strip for Today/Week and
+                  expands to a full month for Month/Custom; single dot per day;
+                  one continuous scroll below
+    F  Dashboard  full month heat-tinted by watch time (no dots), an always-visible
+                  By-Service summary bar, then the History feed — nothing hidden
 -->
 <style>
   :root {
@@ -34,6 +40,7 @@
     --yt: #ff0033;
     --nflx: #e50914;
     --twitch: #9146ff;
+    --vimeo: #17b3e8;
     --good: #128a5b;
     --good-soft: #e2f4ec;
     --warn: #a8630b;
@@ -73,34 +80,27 @@
   }
   .menubar .mb-eye::before { content: "◉"; font-size: 11px; }
 
-  .desk {
-    min-height: 100%;
-    padding: 26px 0 120px;
-    display: flex; justify-content: flex-end;
-  }
+  .desk { min-height: 100%; padding: 26px 0 130px; display: flex; justify-content: flex-end; }
   .anchor { position: relative; margin: 8px 46px 0 0; }
   .beak {
     position: absolute; top: -7px; right: 26px; width: 14px; height: 14px;
     background: var(--card); transform: rotate(45deg);
-    border-left: 1px solid rgba(0,0,0,.06); border-top: 1px solid rgba(0,0,0,.06);
-    z-index: 2;
+    border-left: 1px solid rgba(0,0,0,.06); border-top: 1px solid rgba(0,0,0,.06); z-index: 2;
   }
 
   /* ---- the popover box -------------------------------------------------- */
   .popover {
     position: relative; z-index: 1;
-    background: var(--card);
-    border-radius: 12px;
+    background: var(--card); border-radius: 12px;
     box-shadow: 0 18px 60px rgba(10,12,30,.42), 0 2px 8px rgba(10,12,30,.28);
-    overflow: hidden;
-    display: flex; flex-direction: column;
-    color: var(--ink);
+    overflow: hidden; display: flex; flex-direction: column; color: var(--ink);
   }
   .variant-A .popover { width: 360px; height: 520px; }
   .variant-B .popover { width: 420px; height: 600px; }
-  .variant-C .popover { width: 560px; height: 640px; }
+  .variant-D .popover { width: 380px; height: 600px; }
+  .variant-E .popover { width: 380px; height: 560px; }
+  .variant-F .popover { width: 400px; height: 620px; }
 
-  /* size / state readout that hangs off the popover (not part of the design) */
   .readout {
     position: absolute; left: 0; right: 0; bottom: -30px;
     font: 11px/1.4 var(--mono); color: rgba(255,255,255,.85);
@@ -161,48 +161,31 @@
   .day-hd .d-date { color: var(--ink-faint); font-size: 11.5px; }
   .day-hd .d-total { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
   .day-hd .d-span { display: block; font-size: 10.5px; color: var(--ink-faint); font-family: var(--mono); margin-top: 1px; }
-  .prov-pill {
-    font: 10px var(--sans); font-weight: 600; color: var(--prov);
-    background: var(--prov-soft); border-radius: 999px; padding: 1px 7px;
-  }
+  .prov-pill { font: 10px var(--sans); font-weight: 600; color: var(--prov); background: var(--prov-soft); border-radius: 999px; padding: 1px 7px; }
   .day-hd .d-total.prov { color: var(--prov); font-style: italic; }
 
   .views { padding: 2px 0 6px; }
-  .view {
-    display: grid; grid-template-columns: 14px 1fr auto; gap: 9px;
-    padding: 6px 14px 6px 14px; align-items: start;
-  }
+  .view { display: grid; grid-template-columns: 14px 1fr auto; gap: 9px; padding: 6px 14px; align-items: start; }
   .view:hover { background: var(--panel); }
   .view .svc-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
   .view .v-main { min-width: 0; }
   .view .v-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; }
   .view .v-meta { font-size: 11px; color: var(--ink-dim); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 1px; }
-  .tag {
-    font: 10px var(--mono); padding: 0 5px; border-radius: 4px;
-    background: var(--panel-2); color: var(--ink-dim);
-  }
+  .tag { font: 10px var(--mono); padding: 0 5px; border-radius: 4px; background: var(--panel-2); color: var(--ink-dim); }
   .tag.fmt { background: #e9eefb; color: #2c4c9c; }
   .tag.emb { background: var(--warn-soft); color: var(--warn); }
   .tag.live { background: #fde8ec; color: var(--yt); }
   .view .v-time { font-family: var(--mono); font-size: 11.5px; color: var(--ink); text-align: right; white-space: nowrap; }
-  .pos {
-    grid-column: 2 / 4; height: 3px; border-radius: 3px; background: var(--panel-2);
-    margin-top: 5px; overflow: hidden;
-  }
+  .pos { grid-column: 2 / 4; height: 3px; border-radius: 3px; background: var(--panel-2); margin-top: 5px; overflow: hidden; }
   .pos > i { display: block; height: 100%; background: var(--line-2); }
   .more-row { padding: 8px 14px; font-size: 11.5px; color: var(--ink-faint); font-style: italic; }
 
   /* ---- By Service --------------------------------------------------- */
   .svc-scope { padding: 10px 14px 4px; font-size: 11.5px; color: var(--ink-dim); }
   .svc-scope b { color: var(--ink); font-weight: 600; }
-  .svc {
-    padding: 9px 14px; border-bottom: 1px solid var(--line);
-  }
+  .svc { padding: 9px 14px; border-bottom: 1px solid var(--line); }
   .svc-top { display: flex; align-items: center; gap: 8px; }
-  .svc-top .exp {
-    border: 0; background: transparent; cursor: pointer; color: var(--ink-faint);
-    font-size: 10px; width: 12px; padding: 0;
-  }
+  .svc-top .exp { border: 0; background: transparent; cursor: pointer; color: var(--ink-faint); font-size: 10px; width: 12px; padding: 0; }
   .svc-top .exp.spacer { visibility: hidden; }
   .svc-top .s-name { font-weight: 600; }
   .svc-top .s-name .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
@@ -213,17 +196,12 @@
   .svc-kids .k { display: flex; font-size: 11.5px; color: var(--ink-dim); }
   .svc-kids .k .kt { font-family: var(--mono); }
   .svc-kids .k .kn { margin-left: auto; font-family: var(--mono); color: var(--ink); }
-  .svc-kids .emb-sub {
-    font-size: 11px; color: var(--warn); border-top: 1px dashed var(--line-2);
-    padding-top: 4px; margin-top: 2px;
-  }
+  .svc-kids .emb-sub { font-size: 11px; color: var(--warn); border-top: 1px dashed var(--line-2); padding-top: 4px; margin-top: 2px; }
   .generic-note { font-size: 10.5px; color: var(--ink-faint); margin-top: 3px; }
-
   .adapter-group { background: var(--panel); }
   .adapter-hd {
     display: flex; align-items: center; gap: 7px; padding: 9px 14px 4px;
-    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--warn);
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--warn);
   }
   .adapter-hd::before { content: "⚠"; }
   .adapter-sub { padding: 0 14px 6px; font-size: 11px; color: var(--ink-dim); }
@@ -239,41 +217,28 @@
     border-radius: 7px; background: var(--card); color: var(--ink); width: 100%;
   }
   .field input[readonly] { background: var(--panel-2); color: var(--ink-dim); }
-  .field .mini {
-    font: 11px var(--sans); padding: 4px 8px; border: 1px solid var(--line-2);
-    border-radius: 6px; background: var(--card); cursor: pointer; white-space: nowrap;
-  }
+  .field .mini { font: 11px var(--sans); padding: 4px 8px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--card); cursor: pointer; white-space: nowrap; }
   .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
   .switch .track { width: 34px; height: 20px; border-radius: 999px; background: var(--line-2); position: relative; transition: background .12s; }
   .switch .track > i { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .12s; }
   .switch.on .track { background: var(--good); }
   .switch.on .track > i { left: 16px; }
-  .step-row { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; }
+  .step-row { display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; }
   .step-row button { border: 0; background: var(--card); padding: 5px 10px; cursor: pointer; font: 13px var(--mono); }
   .step-row .val { padding: 5px 12px; font: 12px var(--mono); border-left: 1px solid var(--line-2); border-right: 1px solid var(--line-2); }
 
   /* ---- Categorical reserved slot -------------------------------- */
-  .cat-stub {
-    margin: 12px 14px; padding: 16px; border: 1.5px dashed var(--line-2);
-    border-radius: 10px; text-align: center; color: var(--ink-faint);
-  }
+  .cat-stub { margin: 12px 14px; padding: 16px; border: 1.5px dashed var(--line-2); border-radius: 10px; text-align: center; color: var(--ink-faint); }
   .cat-stub .soon { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--accent); }
 
-  /* ---- month grid (shared widget) ----------------------------- */
-  .cal {
-    position: absolute; z-index: 20; background: var(--card); border: 1px solid var(--line-2);
-    border-radius: 10px; box-shadow: 0 10px 30px rgba(10,12,30,.28); padding: 10px;
-    width: 232px;
-  }
+  /* ---- round-1 month grid overlay (A / B only) ------------------ */
+  .cal { position: absolute; z-index: 20; background: var(--card); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 10px 30px rgba(10,12,30,.28); padding: 10px; width: 232px; }
   .cal-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
   .cal-hd .m { font-weight: 650; font-size: 12px; }
   .cal-hd button { border: 0; background: transparent; cursor: pointer; color: var(--ink-dim); font-size: 13px; padding: 2px 6px; }
   .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
   .cal-grid .dow { font-size: 9.5px; color: var(--ink-faint); text-align: center; padding: 2px 0; text-transform: uppercase; }
-  .cal-grid .cell {
-    font: 11px var(--mono); text-align: center; padding: 5px 0; border-radius: 5px;
-    cursor: pointer; color: var(--ink); user-select: none;
-  }
+  .cal-grid .cell { font: 11px var(--mono); text-align: center; padding: 5px 0; border-radius: 5px; cursor: pointer; color: var(--ink); user-select: none; }
   .cal-grid .cell.mut { color: var(--ink-faint); }
   .cal-grid .cell:hover { background: var(--panel-2); }
   .cal-grid .cell.in { background: var(--accent-soft); border-radius: 0; }
@@ -293,66 +258,80 @@
   .variant-B .b-hd { position: sticky; top: 0; z-index: 10; background: var(--card); }
   .variant-B .b-hd .row1 { display: flex; align-items: center; gap: 8px; padding: 12px 14px 0; }
   .variant-B .b-hd .row1 .app-name { margin-right: auto; }
-  .variant-B .b-section-hd {
+  .b-section-hd {
     padding: 12px 14px 6px; font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .07em; color: var(--ink-faint); background: var(--panel);
-    border-bottom: 1px solid var(--line); position: sticky; top: 84px; z-index: 5;
+    border-bottom: 1px solid var(--line);
   }
-  .variant-B .slideover {
+  .slideover {
     position: absolute; inset: 0; background: var(--card); z-index: 30;
-    display: flex; flex-direction: column;
-    transform: translateX(100%); transition: transform .18s ease;
+    display: flex; flex-direction: column; transform: translateX(100%); transition: transform .18s ease;
   }
-  .variant-B .slideover.open { transform: translateX(0); }
-  .variant-B .slideover .so-hd { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; }
-  .variant-B .slideover .so-hd button { border: 0; background: transparent; font-size: 15px; cursor: pointer; color: var(--ink-dim); }
+  .slideover.open { transform: translateX(0); }
+  .slideover .so-hd { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; }
+  .slideover .so-hd button { border: 0; background: transparent; font-size: 15px; cursor: pointer; color: var(--ink-dim); }
   .variant-B .resize-h {
-    position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px;
-    cursor: nwse-resize; z-index: 40;
+    position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; cursor: nwse-resize; z-index: 40;
     background: linear-gradient(135deg, transparent 46%, var(--line-2) 46%, var(--line-2) 54%, transparent 54%, transparent 66%, var(--line-2) 66%, var(--line-2) 74%, transparent 74%);
   }
 
-  /* ================= VARIANT C — master / detail ================= */
-  .variant-C .c-wrap { display: grid; grid-template-columns: 156px 1fr; flex: 1; min-height: 0; }
-  .variant-C .rail {
-    background: var(--panel); border-right: 1px solid var(--line);
-    display: flex; flex-direction: column; padding: 12px 10px; gap: 4px;
+  /* ================= ROUND 2 — calendar-first shared header ================= */
+  .cf-hd { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; }
+  .cf-hd .cf-id { display: flex; flex-direction: column; margin-right: auto; }
+  .cf-hd .cf-id .n { font-weight: 700; font-size: 12.5px; }
+  .cf-hd .cf-id .n .dot { color: var(--accent); }
+  .cf-hd .cf-id .t { font: 11px var(--mono); color: var(--ink-dim); }
+  .cf-hd .cf-id .t.prov { color: var(--prov); }
+
+  .cf-chips { display: flex; gap: 4px; padding: 0 12px 8px; }
+  .cf-chips button {
+    flex: 1; font: 11.5px var(--sans); padding: 5px 0; border: 1px solid var(--line-2);
+    background: var(--card); border-radius: 7px; cursor: pointer; color: var(--ink-dim);
   }
-  .variant-C .rail .app-name { padding: 0 6px 6px; }
-  .variant-C .rail .range-btn {
-    text-align: left; font: 12px var(--sans); border: 1px solid var(--line-2);
-    background: var(--card); border-radius: 8px; padding: 7px 9px; cursor: pointer;
-    margin-bottom: 8px; position: relative;
+  .cf-chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+  .cf-cal { padding: 0 12px 8px; border-bottom: 1px solid var(--line); position: relative; }
+  .cf-cal-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+  .cf-cal-hd .m { font-weight: 650; font-size: 12px; }
+  .cf-cal-hd .nav { display: flex; align-items: center; gap: 2px; }
+  .cf-cal-hd button { border: 0; background: transparent; cursor: pointer; color: var(--ink-dim); padding: 2px 6px; font-size: 12px; }
+  .cf-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+  .cf-grid .dow { font: 9px var(--sans); color: var(--ink-faint); text-align: center; padding: 2px 0 3px; text-transform: uppercase; letter-spacing: .04em; }
+  .cf-cell {
+    position: relative; text-align: center; padding: 5px 0 13px; font: 11px var(--mono);
+    border-radius: 6px; cursor: pointer; color: var(--ink); user-select: none;
   }
-  .variant-C .rail .range-btn .rb-label { font-weight: 600; }
-  .variant-C .rail .range-btn .rb-res { display: block; font: 10px var(--mono); color: var(--ink-dim); margin-top: 2px; }
-  .variant-C .rail nav { display: grid; gap: 2px; }
-  .variant-C .rail nav button {
-    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-    border: 0; background: transparent; padding: 7px 9px; border-radius: 7px;
-    font: 12.5px var(--sans); color: var(--ink-dim); cursor: pointer;
+  .cf-cell.mut { color: var(--ink-faint); }
+  .cf-cell.oob { visibility: hidden; pointer-events: none; }
+  .cf-cell:hover { background: var(--panel-2); }
+  .cf-cell.inrange { background: var(--accent-soft); border-radius: 0; }
+  .cf-cell.r-start { border-radius: 6px 0 0 6px; }
+  .cf-cell.r-end { border-radius: 0 6px 6px 0; }
+  .cf-cell .num { display: inline-block; width: 18px; line-height: 16px; }
+  .cf-cell.today .num { background: var(--accent); color: #fff; border-radius: 50%; }
+  .cf-cell.today.prov .num { background: var(--prov); }
+  .cf-dots { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; gap: 2px; justify-content: center; height: 5px; }
+  .cf-dots i { width: 4px; height: 4px; border-radius: 50%; display: block; }
+  .cf-dots i.ring { background: transparent; box-shadow: inset 0 0 0 1px var(--prov); }
+  .cf-cal-note { font-size: 10px; color: var(--ink-faint); margin-top: 5px; display: flex; justify-content: space-between; }
+  .cf-legend { display: flex; align-items: center; gap: 3px; }
+  .cf-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+  /* content controls under the calendar */
+  .cf-swap { display: flex; padding: 8px 12px; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); }
+  .cf-swap .seg { flex: 1; }
+  .cf-swap .seg button { flex: 1; text-align: center; }
+
+  /* F — always-on service summary bar */
+  .svc-mini {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    padding: 8px 12px; border: 0; border-bottom: 1px solid var(--line);
+    background: var(--panel); cursor: pointer; font: 11px var(--mono); color: var(--ink-dim);
+    overflow-x: auto; white-space: nowrap;
   }
-  .variant-C .rail nav button .ic { width: 14px; text-align: center; }
-  .variant-C .rail nav button.on { background: var(--accent-soft); color: #23408c; font-weight: 650; }
-  .variant-C .rail nav button:disabled { color: var(--ink-faint); cursor: default; }
-  .variant-C .rail nav button .lock { margin-left: auto; font-size: 10px; }
-  .variant-C .rail .rail-foot { margin-top: auto; font: 10px var(--mono); color: var(--ink-faint); padding: 6px; }
-  .variant-C .detail { display: flex; flex-direction: column; min-width: 0; }
-  .variant-C .detail .d-hd { padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
-  .variant-C .detail .d-hd h2 { margin: 0; font-size: 15px; }
-  .variant-C .detail .d-hd .sub { font-size: 11.5px; color: var(--ink-dim); margin-top: 2px; }
-  .variant-C .detail .d-body { flex: 1; overflow: auto; }
-  .variant-C .chart-svc { padding: 12px 16px; display: grid; gap: 14px; }
-  .variant-C .chart-svc .crow .clabel { display: flex; font-size: 12px; margin-bottom: 4px; }
-  .variant-C .chart-svc .crow .clabel .cn { font-weight: 600; }
-  .variant-C .chart-svc .crow .clabel .cv { margin-left: auto; font-family: var(--mono); }
-  .variant-C .chart-svc .ctrack { height: 20px; background: var(--panel-2); border-radius: 5px; overflow: hidden; display: flex; }
-  .variant-C .chart-svc .ctrack > i { height: 100%; display: block; }
-  .variant-C .chart-svc .ckids { padding-left: 12px; margin-top: 8px; display: grid; gap: 8px; }
-  .variant-C .chart-svc .ckids .ck .cktrack { height: 12px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-  .variant-C .chart-svc .ckids .ck .cktrack > i { display: block; height: 100%; background: var(--yt); opacity: .8; }
-  .variant-C .chart-svc .ckids .ck .cklabel { display: flex; font-size: 11px; color: var(--ink-dim); margin-bottom: 3px; }
-  .variant-C .chart-svc .ckids .ck .cklabel .v { margin-left: auto; font-family: var(--mono); }
+  .svc-mini .mb-item { display: inline-flex; align-items: center; gap: 5px; }
+  .svc-mini .mb-item i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .svc-mini .mb-more { margin-left: auto; color: var(--ink-faint); }
 
   /* ---- floating variant switcher (NOT part of the design) ---- */
   #switcher {
@@ -361,10 +340,7 @@
     background: #0f1220; color: #fff; border-radius: 999px; padding: 5px 6px;
     box-shadow: 0 10px 40px rgba(0,0,0,.5); font: 12px var(--sans);
   }
-  #switcher button {
-    border: 0; background: transparent; color: #fff; cursor: pointer;
-    font-size: 15px; width: 30px; height: 28px; border-radius: 999px;
-  }
+  #switcher button { border: 0; background: transparent; color: #fff; cursor: pointer; font-size: 15px; width: 30px; height: 28px; border-radius: 999px; }
   #switcher button:hover { background: rgba(255,255,255,.14); }
   #switcher .label { padding: 0 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   #switcher .label b { font-weight: 700; }
@@ -393,24 +369,25 @@
 </div>
 
 <div id="switcher"></div>
-<div class="hint-note">← / → to switch layouts &nbsp;·&nbsp; ?variant=A|B|C</div>
+<div class="hint-note">← / → to switch layouts &nbsp;·&nbsp; ?variant=A|B|D|E|F</div>
 
 <script>
 /* ============================================================================
-   MOCK DATA  — nothing here is real; it exists to give the layouts real density
+   MOCK DATA  — nothing here is real; it gives the layouts real density
    ========================================================================== */
 
 const RANGES = {
   today: { label: "Today",      sub: "open day · provisional", res: "Fri Aug 29 (so far)" },
   week:  { label: "This Week",  sub: "Mon–today · instant",    res: "Mon Aug 25 – Fri Aug 29" },
   month: { label: "This Month", sub: "1st–today · instant",    res: "Aug 1 – Aug 29" },
-  custom:{ label: "Custom",     sub: "pick a range",           res: "—" },
+  custom:{ label: "Custom",     sub: "pick days on the grid",  res: "—" },
 };
+const RANGE_TOTAL = { today: "2h 05m", week: "9h 28m", month: "38h 40m", custom: "—" };
 
-const SVC_COLOR = { youtube: "var(--yt)", netflix: "var(--nflx)", twitch: "var(--twitch)", vimeo: "#17b3e8", mit: "#8a1a2b" };
+const SVC_COLOR = { youtube: "var(--yt)", netflix: "var(--nflx)", twitch: "var(--twitch)", vimeo: "var(--vimeo)", mit: "#8a1a2b" };
 
-// History: activity-flexed "days", newest first. `startsAt` is the day's start;
-// a day may run past midnight and still be one group under its start date.
+// History: activity-flexed "days", newest first. A day may run past midnight and
+// still be one group under its start date.
 const HISTORY = [
   {
     id: "today", name: "Today", date: null, provisional: true,
@@ -440,8 +417,7 @@ const HISTORY = [
   },
   {
     id: "d-mon", name: "Monday", date: "Aug 25", provisional: false,
-    span: "9:04 AM → 3:12 AM (+1d)", total: "6h 48m",
-    pastMidnight: true,
+    span: "9:04 AM → 3:12 AM (+1d)", total: "6h 48m", pastMidnight: true,
     views: [
       { svc: "youtube", title: "Deep work playlist (background while coding)", author: "various", fmt: "standard", embedded: false, watched: "3h 02m", pos: 0.8, at: "9:04 AM" },
       { svc: "netflix", title: "Dune: Part Two", author: "Netflix", fmt: "standard", embedded: false, watched: "2h 46m", pos: 1.0, at: "11:20 PM" },
@@ -450,8 +426,6 @@ const HISTORY = [
   },
 ];
 
-// By Service — aggregate for the active range (kept static across ranges here;
-// only the scope caption changes, so "every pane obeys the selector" is visible).
 const BYSERVICE = {
   ranked: [
     {
@@ -473,40 +447,57 @@ const BYSERVICE = {
 };
 
 const SETTINGS = {
-  token: "wl_9f2a17b4…c71d",
-  port: 47600,
-  retentionDays: 90,
-  launchAtLogin: true,
-  dayEndsAround: "04:00",
-  version: "0.1.0 · contract v1",
+  token: "wl_9f2a17b4…c71d", port: 47600, retentionDays: 90,
+  launchAtLogin: true, dayEndsAround: "04:00", version: "0.1.0 · contract v1",
 };
 
+// mock "now"
+const NOW = { y: 2026, m: 7, d: 29 }; // Aug 29 2026 (m is 0-indexed)
+
+// per-day activity for the calendar dots / heat — real for the HISTORY days,
+// deterministic pseudo-fill for the rest of the month.
+function dayActivity(d) {
+  const fixed = {
+    29: { svcs: ["youtube", "netflix"], mins: 125, prov: true },
+    28: { svcs: ["netflix", "youtube", "vimeo"], mins: 212 },
+    27: { svcs: ["twitch"], mins: 72 },
+    25: { svcs: ["netflix", "youtube"], mins: 408 },
+  };
+  if (fixed[d]) return fixed[d];
+  if (d > NOW.d) return { svcs: [], mins: 0 };           // not watched yet
+  const seed = (d * 1103515245 + 12345) % 97;
+  if (seed < 24) return { svcs: [], mins: 0 };           // a quiet day
+  const pool = ["youtube", "netflix", "twitch", "vimeo"];
+  const n = 1 + (seed % 3);
+  return { svcs: pool.slice(0, n), mins: 15 + seed * 4 };
+}
+
 /* ============================================================================
-   STATE  (in memory only — prototype rule: no persistence)
+   STATE  (in memory only)
    ========================================================================== */
 
 const state = {
-  variant: "A",
+  variant: "D",
   range: "week",
-  pane: "history",          // history | services | settings   (A and C)
+  pane: "history",         // history | services | settings
   collapsed: { "d-mon": true },
   ytExpanded: true,
-  calOpen: false,
-  calMonth: 7,              // 0-indexed; 7 = August
-  calYear: 2026,
-  customStart: null,
-  customEnd: null,
-  computing: false,         // fake spinner for Custom
-  popW: 420, popH: 600,     // variant B live size
-  soOpen: false,            // variant B settings slide-over
+  calOpen: false,          // round-1 overlay (A/B)
+  calMonth: 7, calYear: 2026,
+  calExpanded: false,      // round-2 E: force full month
+  customStart: null, customEnd: null,
+  computing: false,
+  popW: 420, popH: 600,    // variant B live size
+  soOpen: false,           // settings slide-over (B/D/E/F)
 };
 
 /* ============================================================================
-   SMALL HELPERS
+   HELPERS
    ========================================================================== */
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtMins = (m) => (m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`);
 
 function rangeResolved() {
   if (state.range === "custom" && state.customStart && state.customEnd) {
@@ -515,35 +506,38 @@ function rangeResolved() {
   }
   return RANGES[state.range].res;
 }
+function rangeTotal() {
+  if (state.range === "custom") {
+    if (!(state.customStart && state.customEnd)) return "—";
+    let sum = 0;
+    for (let d = state.customStart.getDate(); d <= state.customEnd.getDate(); d++) sum += dayActivity(d).mins;
+    return fmtMins(sum);
+  }
+  return RANGE_TOTAL[state.range];
+}
+
+// which August days the current range covers (mock month is always August)
+function rangeDays() {
+  if (state.range === "today") return [NOW.d, NOW.d];
+  if (state.range === "week")  return [25, 29];
+  if (state.range === "month") return [1, 29];
+  if (state.customStart && state.customEnd) return [state.customStart.getDate(), state.customEnd.getDate()];
+  if (state.customStart) return [state.customStart.getDate(), state.customStart.getDate()];
+  return [0, -1];
+}
 
 function visibleDays() {
   if (state.range === "today") return HISTORY.filter((d) => d.id === "today");
-  if (state.range === "week")  return HISTORY;
-  return HISTORY; // month / custom: same mock set + a "+earlier" stub row
+  return HISTORY;
 }
 
-/* ---- shared: date-range segmented control ---- */
-function rangeSeg(size) {
-  const keys = ["today", "week", "month", "custom"];
-  return `<div class="seg range-seg" data-size="${size}">${keys
-    .map((k) => `<button data-range="${k}" class="${state.range === k ? "on" : ""}">${RANGES[k].label}</button>`)
-    .join("")}</div>`;
-}
-
-function rangeLine() {
-  const r = RANGES[state.range];
-  const spin = state.computing ? `<span class="spinner"></span>` : "";
-  return `<div class="range-line">${spin}<span class="res">${esc(rangeResolved())}</span><span class="sub">${esc(r.sub)}</span></div>`;
-}
-
-/* ---- shared: month grid ---- */
+/* ---- round-1 overlay month grid (A / B) ---- */
 function monthGrid(anchorCss) {
   const first = new Date(state.calYear, state.calMonth, 1);
   const startDow = first.getDay();
   const daysInMonth = new Date(state.calYear, state.calMonth + 1, 0).getDate();
   const monthName = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const dows = ["S", "M", "T", "W", "T", "F", "S"].map((d) => `<div class="dow">${d}</div>`).join("");
-
   const cells = [];
   for (let i = 0; i < startDow; i++) cells.push(`<div class="cell mut"></div>`);
   const s = state.customStart, e = state.customEnd;
@@ -554,23 +548,112 @@ function monthGrid(anchorCss) {
     if ((s && +date === +s) || (e && +date === +e)) cls += " end";
     cells.push(`<div class="${cls}" data-day="${d}">${d}</div>`);
   }
-
   return `<div class="cal" style="${anchorCss}">
-    <div class="cal-hd">
-      <button data-cal="prev">‹</button>
-      <span class="m">${monthName}</span>
-      <button data-cal="next">›</button>
-    </div>
+    <div class="cal-hd"><button data-cal="prev">‹</button><span class="m">${monthName}</span><button data-cal="next">›</button></div>
     <div class="cal-grid">${dows}${cells.join("")}</div>
-    <div class="cal-foot">
-      <span>${s && e ? "click Apply" : s ? "pick end day" : "pick start day"}</span>
-      <button data-cal="apply">Apply</button>
-    </div>
+    <div class="cal-foot"><span>${s && e ? "click Apply" : s ? "pick end day" : "pick start day"}</span><button data-cal="apply">Apply</button></div>
   </div>`;
 }
 
 /* ============================================================================
-   PANE RENDERERS  (shared markup, reused by every variant's body)
+   ROUND-2 SHARED WIDGETS — calendar-on-top
+   ========================================================================== */
+
+function cfChips() {
+  return `<div class="cf-chips">
+    ${["today", "week", "month", "custom"].map((k) =>
+      `<button data-range="${k}" class="${state.range === k ? "on" : ""}">${RANGES[k].label}</button>`).join("")}
+  </div>`;
+}
+
+// dotMode: "services" | "single" | "heat"
+function cfCalendar(dotMode, opts = {}) {
+  const collapsed = opts.collapsible && !state.calExpanded && (state.range === "today" || state.range === "week");
+  const first = new Date(state.calYear, state.calMonth, 1);
+  const monthName = first.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const dows = ["M", "T", "W", "T", "F", "S", "S"].map((d) => `<div class="dow">${d}</div>`).join("");
+  const [rs, re] = rangeDays();
+
+  // grid days: Monday-first
+  let daySlots = [];
+  if (collapsed) {
+    // the week that contains "today": Aug 25 (Mon) .. Aug 31 (Sun)
+    daySlots = [25, 26, 27, 28, 29, 30, 31].map((d) => ({ d, oob: d > 31 }));
+  } else {
+    const daysInMonth = new Date(state.calYear, state.calMonth + 1, 0).getDate();
+    let lead = (first.getDay() + 6) % 7; // Monday = 0
+    for (let i = 0; i < lead; i++) daySlots.push({ d: null });
+    for (let d = 1; d <= daysInMonth; d++) daySlots.push({ d });
+    while (daySlots.length % 7) daySlots.push({ d: null });
+  }
+
+  const cell = (slot) => {
+    if (slot.d == null) return `<div class="cf-cell oob"></div>`;
+    const d = slot.d;
+    const act = dayActivity(d);
+    const isToday = d === NOW.d;
+    const inRange = d >= rs && d <= re;
+    let cls = "cf-cell";
+    if (d > NOW.d) cls += " mut";
+    if (inRange) cls += " inrange";
+    if (d === rs) cls += " r-start";
+    if (d === re) cls += " r-end";
+    if (isToday) cls += " today" + (act.prov ? " prov" : "");
+
+    let mark = "";
+    if (dotMode === "heat") {
+      const a = Math.min(act.mins / 300, 1) * 0.55;
+      if (a > 0.02) cls += "";
+      const bg = a > 0.02 ? `background: rgba(59,110,245,${a.toFixed(2)});` : "";
+      return `<div class="${cls}" data-day="${d}" style="${bg}"><span class="num">${d}</span>${
+        act.prov ? `<div class="cf-dots"><i class="ring"></i></div>` : ""}</div>`;
+    }
+    if (dotMode === "single") {
+      if (act.svcs.length) {
+        const c = SVC_COLOR[act.svcs[0]] || "var(--ink-faint)";
+        mark = `<div class="cf-dots"><i class="${act.prov ? "ring" : ""}" style="${act.prov ? "" : "background:" + c}"></i></div>`;
+      }
+    } else { // services
+      mark = act.svcs.length
+        ? `<div class="cf-dots">${act.svcs.slice(0, 3).map((s) =>
+            `<i style="background:${SVC_COLOR[s] || "var(--ink-faint)"}"></i>`).join("")}</div>`
+        : "";
+    }
+    return `<div class="${cls}" data-day="${d}"><span class="num">${d}</span>${mark}</div>`;
+  };
+
+  const legend = dotMode === "heat"
+    ? `<span class="cf-legend">less <i style="background:rgba(59,110,245,.08)"></i><i style="background:rgba(59,110,245,.28)"></i><i style="background:rgba(59,110,245,.5)"></i> more</span>`
+    : `<span class="cf-legend">dots = services watched</span>`;
+
+  return `<div class="cf-cal">
+    <div class="cf-cal-hd">
+      <span class="m">${monthName}${collapsed ? " · week" : ""}</span>
+      <span class="nav">
+        ${opts.collapsible ? `<button data-cal-expand title="expand/collapse">${state.calExpanded || !collapsed && (state.range === "today" || state.range === "week") ? "▾" : "▸"}</button>` : ""}
+        <button data-cal="prev">‹</button><button data-cal="next">›</button>
+      </span>
+    </div>
+    <div class="cf-grid">${dows}${daySlots.map(cell).join("")}</div>
+    <div class="cf-cal-note"><span>${esc(rangeResolved())}</span>${legend}</div>
+  </div>`;
+}
+
+function cfHeader(subProv) {
+  const total = rangeTotal();
+  const prov = state.range === "today" || subProv;
+  return `<div class="cf-hd">
+    <span class="cf-id">
+      <span class="n">Watch<span class="dot">·</span>Logs</span>
+      <span class="t ${prov ? "prov" : ""}">${RANGES[state.range].label} · ${esc(total)}${prov ? " · counting" : ""}</span>
+    </span>
+    ${state.computing ? `<span class="spinner"></span>` : ""}
+    <button class="icon-btn" data-so-open title="Settings">⚙</button>
+  </div>`;
+}
+
+/* ============================================================================
+   PANE RENDERERS  (shared)
    ========================================================================== */
 
 function svcDot(key) { return `<span class="svc-dot" style="background:${SVC_COLOR[key] || "var(--ink-faint)"}"></span>`; }
@@ -609,14 +692,10 @@ function historyPane() {
       ${isCollapsed ? "" : `<div class="views">${d.views.map(viewRow).join("")}</div>`}
     </div>`;
   }).join("");
-
   const moreRow = (state.range === "month" || state.range === "custom")
     ? `<div class="more-row">+ 21 earlier days in range — scroll to load</div>` : "";
-
   const provNote = visibleDays().some((d) => d.provisional)
-    ? `<div class="more-row">“Today” is still open. Its total updates live and re-files into the right day at ~${SETTINGS.dayEndsAround}.</div>`
-    : "";
-
+    ? `<div class="more-row">“Today” is still open. Its total updates live and re-files into the right day at ~${SETTINGS.dayEndsAround}.</div>` : "";
   return days + moreRow + provNote;
 }
 
@@ -639,8 +718,7 @@ function serviceRow(s) {
       <span class="s-total">${esc(s.total)}</span>
     </div>
     <div class="bar"><i style="width:${Math.round(s.frac * 100)}%"></i></div>
-    ${kids}
-    ${generic}
+    ${kids}${generic}
   </div>`;
 }
 
@@ -651,11 +729,7 @@ function servicesPane() {
     <div class="adapter-hd">Needs an Adapter</div>
     <div class="adapter-sub">Counted, but metadata is thin. Grouped by domain until an Adapter ships.</div>
     ${BYSERVICE.needsAdapter.map((n) => `<div class="svc">
-        <div class="svc-top">
-          <button class="exp spacer">▶</button>
-          <span class="s-name">${esc(n.name)}</span>
-          <span class="s-total">${esc(n.total)}</span>
-        </div>
+        <div class="svc-top"><button class="exp spacer">▶</button><span class="s-name">${esc(n.name)}</span><span class="s-total">${esc(n.total)}</span></div>
         <div class="generic-note">${esc(n.note)}</div>
       </div>`).join("")}
   </div>`;
@@ -668,11 +742,7 @@ function settingsPane() {
     <div class="field">
       <label>Pairing string</label>
       <div class="hint">Paste this into the Extension once. Contains host, port, and token.</div>
-      <div class="ctl">
-        <input type="text" readonly value="${esc(S.token)}" />
-        <button class="mini" data-noop>Copy</button>
-        <button class="mini" data-noop>Regenerate</button>
-      </div>
+      <div class="ctl"><input type="text" readonly value="${esc(S.token)}" /><button class="mini" data-noop>Copy</button><button class="mini" data-noop>Regenerate</button></div>
     </div>
     <div class="field">
       <label>Local port</label>
@@ -682,30 +752,18 @@ function settingsPane() {
     <div class="field">
       <label>Keep raw events for</label>
       <div class="hint">Views and computed time are kept forever. Only the raw event log is pruned.</div>
-      <div class="ctl">
-        <span class="step-row">
-          <button data-noop>–</button><span class="val">${S.retentionDays} days</span><button data-noop>+</button>
-        </span>
-      </div>
+      <div class="ctl"><span class="step-row"><button data-noop>–</button><span class="val">${S.retentionDays} days</span><button data-noop>+</button></span></div>
     </div>
     <div class="field">
       <label>My day ends around</label>
       <div class="hint">Late-night watching before this time files into the previous day.</div>
-      <div class="ctl">
-        <span class="step-row">
-          <button data-noop>–</button><span class="val">${S.dayEndsAround}</span><button data-noop>+</button>
-        </span>
-      </div>
+      <div class="ctl"><span class="step-row"><button data-noop>–</button><span class="val">${S.dayEndsAround}</span><button data-noop>+</button></span></div>
     </div>
     <div class="field">
       <label>Launch at login</label>
-      <div class="ctl">
-        <span class="switch ${S.launchAtLogin ? "on" : ""}" data-toggle-login><span class="track"><i></i></span></span>
-      </div>
+      <div class="ctl"><span class="switch ${S.launchAtLogin ? "on" : ""}" data-toggle-login><span class="track"><i></i></span></span></div>
     </div>
-    <div class="field">
-      <div class="hint">${esc(S.version)}</div>
-    </div>
+    <div class="field"><div class="hint">${esc(S.version)}</div></div>
   </div>`;
 }
 
@@ -713,10 +771,29 @@ function catStub() {
   return `<div class="cat-stub">
     <div class="soon">RESERVED</div>
     <div style="margin-top:6px">Categories pane</div>
-    <div style="font-size:11px;margin-top:4px">ML grouping of Views by topic. Same range selector will drive it.</div>
+    <div style="font-size:11px;margin-top:4px">ML grouping of Views by topic. The same calendar range will drive it.</div>
   </div>`;
 }
 
+function slideoverSettings() {
+  return `<div class="slideover ${state.soOpen ? "open" : ""}">
+    <div class="so-hd"><button data-so-close>‹</button> Settings</div>
+    <div class="body">${settingsPane()}</div>
+  </div>`;
+}
+
+/* ============================================================================
+   ROUND 1 — VARIANT A (compact tabbed)  &  VARIANT B (single scroll)
+   ========================================================================== */
+
+function rangeSeg() {
+  return `<div class="seg range-seg">${["today", "week", "month", "custom"].map((k) =>
+    `<button data-range="${k}" class="${state.range === k ? "on" : ""}">${RANGES[k].label}</button>`).join("")}</div>`;
+}
+function rangeLine() {
+  const spin = state.computing ? `<span class="spinner"></span>` : "";
+  return `<div class="range-line">${spin}<span class="res">${esc(rangeResolved())}</span><span class="sub">${esc(RANGES[state.range].sub)}</span></div>`;
+}
 function paneBody(pane) {
   if (pane === "history") return historyPane();
   if (pane === "services") return servicesPane();
@@ -725,133 +802,101 @@ function paneBody(pane) {
   return "";
 }
 
-/* ============================================================================
-   VARIANT A — compact tabbed  (360 x 520, fixed)
-   ========================================================================== */
 function renderA() {
-  const tab = (k, label, extra = "") =>
-    `<button data-pane="${k}" class="${state.pane === k ? "on" : ""}" ${extra}>${label}</button>`;
+  const tab = (k, label) => `<button data-pane="${k}" class="${state.pane === k ? "on" : ""}">${label}</button>`;
   return `<div class="popover">
     <div class="hd">
       <div class="app-name">Watch<span class="dot">·</span>Logs</div>
-      <div style="margin-top:8px">${rangeSeg("sm")}</div>
+      <div style="margin-top:8px">${rangeSeg()}</div>
       ${rangeLine()}
       ${state.calOpen ? monthGrid("top:96px;left:14px") : ""}
     </div>
     <div class="a-tabs">
       <div class="seg">
-        ${tab("history", "History")}
-        ${tab("services", "Services")}
+        ${tab("history", "History")}${tab("services", "Services")}
         <button disabled>Categories<span class="soon">SOON</span></button>
       </div>
       <button class="icon-btn gear" data-pane="settings" title="Settings">⚙</button>
     </div>
-    <div class="body">${paneBody(state.pane === "settings" ? "settings" : state.pane)}</div>
-    <div class="foot">
-      <span>range=${state.range} · pane=${state.pane}</span>
-      <span>360×520 · <span class="off">resize</span> fixed</span>
-    </div>
+    <div class="body">${paneBody(state.pane)}</div>
+    <div class="foot"><span>range=${state.range} · pane=${state.pane}</span><span>360×520 · <span class="off">resize</span> fixed</span></div>
   </div>`;
 }
 
-/* ============================================================================
-   VARIANT B — single scroll + settings slide-over  (420 x 600, RESIZABLE)
-   ========================================================================== */
 function renderB() {
   return `<div class="popover" style="width:${state.popW}px;height:${state.popH}px">
     <div class="b-hd">
-      <div class="row1">
-        <div class="app-name">Watch<span class="dot">·</span>Logs</div>
-        <button class="icon-btn" data-so-open title="Settings">⚙</button>
-      </div>
-      <div style="padding:8px 14px 10px">
-        ${rangeSeg("md")}
-        ${rangeLine()}
-        ${state.calOpen ? monthGrid("top:110px;left:14px") : ""}
-      </div>
+      <div class="row1"><div class="app-name">Watch<span class="dot">·</span>Logs</div><button class="icon-btn" data-so-open title="Settings">⚙</button></div>
+      <div style="padding:8px 14px 10px">${rangeSeg()}${rangeLine()}${state.calOpen ? monthGrid("top:110px;left:14px") : ""}</div>
     </div>
     <div class="body">
-      <div class="b-section-hd">History</div>
-      ${historyPane()}
-      <div class="b-section-hd">By Service</div>
-      ${servicesPane()}
-      <div class="b-section-hd">Categories</div>
-      ${catStub()}
+      <div class="b-section-hd">History</div>${historyPane()}
+      <div class="b-section-hd">By Service</div>${servicesPane()}
+      <div class="b-section-hd">Categories</div>${catStub()}
     </div>
-    <div class="foot">
-      <span>range=${state.range}</span>
-      <span>${state.popW}×${state.popH} · drag corner ↘</span>
-    </div>
-    <div class="slideover ${state.soOpen ? "open" : ""}">
-      <div class="so-hd"><button data-so-close>‹</button> Settings</div>
-      <div class="body">${settingsPane()}</div>
-    </div>
+    <div class="foot"><span>range=${state.range}</span><span>${state.popW}×${state.popH} · drag corner ↘</span></div>
+    ${slideoverSettings()}
     <div class="resize-h" data-resize></div>
   </div>`;
 }
 
 /* ============================================================================
-   VARIANT C — master / detail  (560 x 640, fixed, window-like)
+   ROUND 2 — VARIANT D (Almanac): full month, 3 service dots, tabbed content
    ========================================================================== */
-function renderC() {
-  const navBtn = (k, ic, label, opts = {}) => {
-    if (opts.locked) return `<button disabled><span class="ic">${ic}</span>${label}<span class="lock">🔒</span></button>`;
-    return `<button data-pane="${k}" class="${state.pane === k ? "on" : ""}"><span class="ic">${ic}</span>${label}</button>`;
-  };
-
-  let detail;
-  if (state.pane === "services") {
-    detail = `<div class="d-hd"><h2>By Service</h2><div class="sub">${RANGES[state.range].label} · ${esc(rangeResolved())}</div></div>
-      <div class="d-body"><div class="chart-svc">
-        ${BYSERVICE.ranked.map((s) => {
-          const kids = s.children && state.ytExpanded ? `<div class="ckids">
-            ${s.children.map((c) => `<div class="ck">
-              <div class="cklabel"><span>${c.label}</span><span class="v">${c.time}</span></div>
-              <div class="cktrack"><i style="width:${Math.round((c.mins / s.mins) * 100)}%"></i></div>
-            </div>`).join("")}
-            <div class="cklabel" style="color:var(--warn)"><span>— of which embedded</span><span class="v">${s.embedded}</span></div>
-          </div>` : "";
-          const toggle = s.children ? `<button class="exp" data-svc-toggle="${s.key}" style="border:0;background:transparent;cursor:pointer;color:var(--ink-faint)">${state.ytExpanded ? "▼" : "▶"}</button>` : "";
-          return `<div class="crow">
-            <div class="clabel"><span class="cn">${toggle} ${esc(s.name)}${s.adapter === false ? ' <span class="tag">no adapter</span>' : ""}</span><span class="cv">${s.total}</span></div>
-            <div class="ctrack"><i style="width:${Math.round(s.frac * 100)}%;background:${SVC_COLOR[s.key]}"></i></div>
-            ${kids}
-          </div>`;
-        }).join("")}
-        <div class="crow">
-          <div class="clabel"><span class="cn" style="color:var(--warn)">⚠ Needs an Adapter</span><span class="cv">53m</span></div>
-          ${BYSERVICE.needsAdapter.map((n) => `<div class="clabel" style="font-size:11px;color:var(--ink-dim)"><span>${esc(n.name)} — ${esc(n.note)}</span><span class="v">${n.total}</span></div>`).join("")}
-        </div>
-      </div></div>`;
-  } else if (state.pane === "settings") {
-    detail = `<div class="d-hd"><h2>Settings</h2><div class="sub">${esc(SETTINGS.version)}</div></div>
-      <div class="d-body">${settingsPane()}</div>`;
-  } else if (state.pane === "categories") {
-    detail = `<div class="d-hd"><h2>Categories</h2><div class="sub">reserved</div></div><div class="d-body">${catStub()}</div>`;
-  } else {
-    detail = `<div class="d-hd"><h2>History</h2><div class="sub">${RANGES[state.range].label} · grouped by day</div></div>
-      <div class="d-body">${historyPane()}</div>`;
-  }
-
+function renderD() {
   return `<div class="popover">
-    <div class="c-wrap">
-      <div class="rail">
-        <div class="app-name">Watch<span class="dot">·</span>Logs</div>
-        <button class="range-btn" data-cal-open>
-          <span class="rb-label">${RANGES[state.range].label}</span>
-          <span class="rb-res">${esc(rangeResolved())}</span>
-        </button>
-        ${state.calOpen ? monthGrid("top:96px;left:10px") : ""}
-        <nav>
-          ${navBtn("history", "≣", "History")}
-          ${navBtn("services", "▤", "By Service")}
-          ${navBtn("categories", "◈", "Categories", { locked: true })}
-          ${navBtn("settings", "⚙", "Settings")}
-        </nav>
-        <div class="rail-foot">560×640 · fixed</div>
+    ${cfHeader()}
+    ${cfChips()}
+    ${cfCalendar("services")}
+    <div class="cf-swap">
+      <div class="seg">
+        <button data-pane="history" class="${state.pane === "history" ? "on" : ""}">History</button>
+        <button data-pane="services" class="${state.pane === "services" ? "on" : ""}">By Service</button>
       </div>
-      <div class="detail">${detail}</div>
     </div>
+    <div class="body">${state.pane === "services" ? servicesPane() : historyPane()}</div>
+    <div class="foot"><span>range=${state.range} · pane=${state.pane}</span><span>380×600 · fixed</span></div>
+    ${slideoverSettings()}
+  </div>`;
+}
+
+/* ============================================================================
+   ROUND 2 — VARIANT E (Telescope): calendar collapses to a week strip;
+                                    one continuous scroll below
+   ========================================================================== */
+function renderE() {
+  return `<div class="popover">
+    ${cfHeader()}
+    ${cfChips()}
+    ${cfCalendar("single", { collapsible: true })}
+    <div class="body">
+      <div class="b-section-hd">History</div>${historyPane()}
+      <div class="b-section-hd">By Service</div>${servicesPane()}
+      <div class="b-section-hd">Categories</div>${catStub()}
+    </div>
+    <div class="foot"><span>range=${state.range} · cal=${state.calExpanded ? "full" : "auto"}</span><span>380×560 · fixed</span></div>
+    ${slideoverSettings()}
+  </div>`;
+}
+
+/* ============================================================================
+   ROUND 2 — VARIANT F (Dashboard): heat calendar + always-on service bar +
+                                    history feed. Nothing hidden.
+   ========================================================================== */
+function renderF() {
+  const miniItems = BYSERVICE.ranked.map((s) =>
+    `<span class="mb-item"><i style="background:${SVC_COLOR[s.key]}"></i>${esc(s.name)} ${esc(s.total)}</span>`).join("");
+  const showServices = state.pane === "services";
+  return `<div class="popover">
+    ${cfHeader()}
+    ${cfChips()}
+    ${cfCalendar("heat")}
+    <button class="svc-mini" data-pane="${showServices ? "history" : "services"}">
+      ${miniItems}<span class="mb-more">${showServices ? "▾ collapse" : "▸ break down"}</span>
+    </button>
+    <div class="body">${showServices ? servicesPane() : historyPane()}</div>
+    <div class="foot"><span>range=${state.range} · ${showServices ? "services open" : "history"}</span><span>400×620 · fixed</span></div>
+    ${slideoverSettings()}
   </div>`;
 }
 
@@ -859,20 +904,22 @@ function renderC() {
    RENDER + EVENTS
    ========================================================================== */
 
+const RENDERERS = { A: renderA, B: renderB, D: renderD, E: renderE, F: renderF };
+const VARIANT_NAMES = {
+  A: "Compact tabbed · rd1", B: "Single scroll · rd1",
+  D: "Almanac · cal+dots+tabs", E: "Telescope · collapsing cal+scroll", F: "Dashboard · heat+everything",
+};
+const ORDER = ["A", "B", "D", "E", "F"];
+
 function render() {
   document.body.className = "variant-" + state.variant;
-  const stage = $("#stage");
-  stage.innerHTML = state.variant === "A" ? renderA() : state.variant === "B" ? renderB() : renderC();
-
-  const size = state.variant === "A" ? "360 × 520 · fixed"
-    : state.variant === "B" ? `${state.popW} × ${state.popH} · resizable`
-    : "560 × 640 · fixed";
-  $("#readout").textContent = `variant ${state.variant}  ·  ${size}  ·  range=${state.range}  ·  pane=${state.pane}`;
-
+  $("#stage").innerHTML = RENDERERS[state.variant]();
+  const P = $("#stage .popover");
+  const w = P ? P.offsetWidth : 0, h = P ? P.offsetHeight : 0;
+  $("#readout").textContent = `variant ${state.variant} · ${w}×${h} · range=${state.range} · total=${rangeTotal()} · pane=${state.pane}`;
   renderSwitcher();
 }
 
-const VARIANT_NAMES = { A: "Compact tabbed", B: "Single scroll", C: "Master / detail" };
 function renderSwitcher() {
   $("#switcher").innerHTML = `
     <button data-cycle="-1">‹</button>
@@ -883,68 +930,49 @@ function renderSwitcher() {
 function setVariant(v) {
   state.variant = v;
   if (v === "B" && state.pane === "settings") state.pane = "history";
+  if ((v === "D" || v === "E" || v === "F") && !["history", "services"].includes(state.pane)) state.pane = "history";
   const url = new URL(location.href);
   url.searchParams.set("variant", v);
   history.replaceState(null, "", url);
   render();
 }
-
 function cycle(dir) {
-  const order = ["A", "B", "C"];
-  const i = (order.indexOf(state.variant) + dir + 3) % 3;
-  setVariant(order[i]);
+  const i = (ORDER.indexOf(state.variant) + dir + ORDER.length) % ORDER.length;
+  setVariant(ORDER[i]);
 }
 
 function pickRange(k) {
-  if (k === "custom") {
-    state.range = "custom";
-    state.calOpen = true;
-    render();
-    return;
-  }
   state.range = k;
-  state.calOpen = false;
+  if (k === "custom") {
+    if (state.variant === "A" || state.variant === "B") state.calOpen = true;
+  } else {
+    state.calOpen = false;
+    state.customStart = state.customEnd = null;
+  }
   render();
 }
-
 function applyCustom() {
   state.calOpen = false;
   state.computing = true;
   render();
-  setTimeout(() => { state.computing = false; render(); }, 450); // fake aggregation spinner
+  setTimeout(() => { state.computing = false; render(); }, 450);
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-cycle],[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-cal-open],[data-so-open],[data-so-close],[data-toggle-login],[data-day]");
+  const t = e.target.closest("[data-cycle],[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-cal-expand],[data-so-open],[data-so-close],[data-toggle-login],[data-day]");
   if (!t) {
-    // click outside the calendar closes it
-    if (state.calOpen && !e.target.closest(".cal") && !e.target.closest(".range-seg") && !e.target.closest(".range-btn")) {
-      state.calOpen = false; render();
-    }
+    if (state.calOpen && !e.target.closest(".cal") && !e.target.closest(".range-seg")) { state.calOpen = false; render(); }
     return;
   }
-
   if (t.dataset.cycle) return cycle(+t.dataset.cycle);
   if (t.dataset.range) return pickRange(t.dataset.range);
-  if (t.dataset.calOpen !== undefined) { state.calOpen = !state.calOpen; return render(); }
-
-  if (t.dataset.pane) {
-    state.pane = t.dataset.pane;
-    return render();
-  }
-  if (t.dataset.dayToggle) {
-    const id = t.dataset.dayToggle;
-    state.collapsed[id] = !state.collapsed[id];
-    return render();
-  }
-  if (t.dataset.svcToggle) {
-    state.ytExpanded = !state.ytExpanded;
-    return render();
-  }
+  if (t.dataset.pane) { state.pane = t.dataset.pane; state.soOpen = false; return render(); }
+  if (t.dataset.dayToggle) { const id = t.dataset.dayToggle; state.collapsed[id] = !state.collapsed[id]; return render(); }
+  if (t.dataset.svcToggle) { state.ytExpanded = !state.ytExpanded; return render(); }
   if (t.dataset.soOpen !== undefined) { state.soOpen = true; return render(); }
   if (t.dataset.soClose !== undefined) { state.soOpen = false; return render(); }
   if (t.dataset.toggleLogin !== undefined) { SETTINGS.launchAtLogin = !SETTINGS.launchAtLogin; return render(); }
-
+  if (t.dataset.calExpand !== undefined) { state.calExpanded = !state.calExpanded; return render(); }
   if (t.dataset.cal) {
     if (t.dataset.cal === "prev") { state.calMonth--; if (state.calMonth < 0) { state.calMonth = 11; state.calYear--; } }
     if (t.dataset.cal === "next") { state.calMonth++; if (state.calMonth > 11) { state.calMonth = 0; state.calYear++; } }
@@ -953,14 +981,12 @@ document.addEventListener("click", (e) => {
   }
   if (t.dataset.day) {
     const d = new Date(state.calYear, state.calMonth, +t.dataset.day);
-    if (!state.customStart || (state.customStart && state.customEnd)) {
-      state.customStart = d; state.customEnd = null;
-    } else if (d < state.customStart) {
-      state.customEnd = state.customStart; state.customStart = d;
-    } else {
-      state.customEnd = d;
-    }
+    if (!state.customStart || (state.customStart && state.customEnd)) { state.customStart = d; state.customEnd = null; }
+    else if (d < state.customStart) { state.customEnd = state.customStart; state.customStart = d; }
+    else { state.customEnd = d; }
     state.range = "custom";
+    // round-2 variants aggregate live on the second click
+    if (state.customStart && state.customEnd && state.variant !== "A" && state.variant !== "B") return applyCustom();
     return render();
   }
 });
@@ -990,9 +1016,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowRight") cycle(1);
 });
 
-// boot from ?variant=
 const boot = new URL(location.href).searchParams.get("variant");
-if (boot && ["A", "B", "C"].includes(boot.toUpperCase())) state.variant = boot.toUpperCase();
+if (boot && ORDER.includes(boot.toUpperCase())) state.variant = boot.toUpperCase();
 render();
 </script>
 </body>
