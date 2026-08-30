@@ -11,7 +11,7 @@ The App receives a raw, `seq`-ordered Event stream per View (`play`, `pause`,
 `ended`, `viewEnded`, …) and must derive **Segments** — continuous spans of real
 time when the View's Watched conditions held — and from them **Watched time**.
 The Event stream is lossy (heartbeats and events can be dropped or delayed),
-duplicated (at-least-once ingest, ADR 0001), and stamped with a clock the App
+duplicated (at-least-once ingest, ADR 0002), and stamped with a clock the App
 does not control. Several rules for collapsing that stream into Segments are
 non-obvious and expensive to change once Segments are stored and downstream
 panes/aggregation depend on them.
@@ -85,7 +85,7 @@ late-arriving Segment.
   counts. Rejected for v1: the message schema has no focus/blur signal and
   `visibilitychange` does not fire between two visible windows; both visible
   windows accrue Watched time. Left as a future refinement.
-- **Exactly-once / front-door dedupe.** Rejected upstream in ADR 0001; Segment
+- **Exactly-once / front-door dedupe.** Rejected upstream in ADR 0002; Segment
   computation dedupes on `(viewId, seq)` instead.
 
 ## Consequences

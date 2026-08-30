@@ -58,6 +58,14 @@ Sound from a View whose tab is not in the foreground. Recorded as **background**
 Segments (see Segment). It does not add to Watched time; it is kept so analysis can
 later include or exclude it.
 
+### Day
+
+The span of time WatchLogs files activity under, labelled by the calendar date it began.
+A Day is not a fixed clock day: its boundaries flex with the user's activity and it may
+run longer or shorter than 24 hours (see ADR 0001). A **frozen** Day is one whose
+boundary is confirmed; its totals never change afterward. Weeks (Monday–Sunday) and
+months (1st–end) are whole numbers of Days.
+
 ### Service
 
 The video platform a View belongs to — for example `youtube`, `netflix`. For a site with
@@ -82,6 +90,8 @@ back to generic extraction and are flagged in the App as needing an Adapter.
 ## Terms this vocabulary avoids
 
 - **Session** — ambiguous (browser session vs viewing session). Use **View**.
+- **Calendar day / midnight boundary** — WatchLogs's **Day** is activity-flexed, not a
+  fixed clock day; "midnight" never appears in the model.
 - **Domain** — for grouping, use **Service**. "Domain" only describes the fallback case
   where a Service has no Adapter.
 - **Screen time / app time** — WatchLogs measures **Watched time**, not window or app
