@@ -1,81 +1,66 @@
-# Menubar layout — what each variant proposes, and the open questions
+# Menubar layout — decisions so far and open questions
 
-Companion to `index.html`. This is the material for the HITL reaction on ticket
-[#7](https://github.com/AryanDeore/WatchLogs/issues/7); it is **not** a decision.
+Companion to `index.html`. Material for the HITL reaction on ticket
+[#7](https://github.com/AryanDeore/WatchLogs/issues/7). Not itself a decision.
 
-## The scenario this has to survive
+## Locked in (rounds 1–3)
 
-It's Friday 9:41 PM. Aryan opens the popover to answer three questions in one
-glance:
+- Fixed-size popover, ~380 pt wide. Not resizable.
+- Four **separate** panes, tabbed: **History / By Service / Trends / Settings**.
+  Categorical stays a reserved future pane.
+- **Range control on top** is the entry point. Presets Today / This Week /
+  This Month / Custom. Custom opens a month grid; presets are instant.
+- The calendar does **not** carry a per-day heat/dot overview — that job moved to
+  the Trends pane. On top there's at most a slim week strip.
+- **Trends pane** = one stacked bar per day over the selected range, segmented by
+  Service. Granularity follows the range (Week → 7 bars, Month → ~30). A
+  single-day range shows that day's mix instead of a 1-bar chart.
+- **By Service** bars are part-to-whole: track = 100% of watched time in the
+  range, fill = that Service's share. The needs-an-Adapter bucket ("Other sites")
+  is inside the denominator. YouTube expands to its `contentFormat` split with
+  `embedded` as a sub-line.
+- **History** per-video bar = fraction of the video's own timeline watched at
+  least once (coverage). Blank for live and when duration is unknown.
+- Provisional "Today": lighter total + `counting` pill + a note it re-files at
+  `my day ends around`. Past-midnight day is one group under its start date.
 
-1. *What did I watch tonight, and yesterday?* → History
-2. *Where is my time going this week — how much of it is YouTube Shorts?* → By Service
-3. *Nothing today; I just want to bump the retention window.* → Settings
+## Open questions
 
-...and a fourth that only matters once a month: *last Monday I coded from 9 AM
-straight through to 3 AM — did that land as one day or get sliced at midnight?*
+1. **Week strip (G/I) vs range dropdown (H).** G/I keep a always-visible
+   Mon–Sun strip on top — literally "calendar as entry point" — at the cost of
+   ~60 pt of height and a fourth row of range chrome (title total, chips, strip,
+   resolved-range line). H collapses all of that into one dropdown button and
+   gives the panes the room back. Which?
 
-## Side-by-side
+2. **Trends orientation.** Vertical stacked columns (G/I) read as a rhythm/chart —
+   good for a week. Horizontal stacked bars (H) scan as a list and handle a
+   sparse month better (most days are empty; see `?variant=H&pane=trends&range=month`).
+   Pick one, or switch by range?
 
-| | **A · Compact tabbed** | **B · Single scroll** | **C · Master / detail** |
-|---|---|---|---|
-| Size | 360 × 520 | 420 × 600 (start) | 560 × 640 |
-| Resize | fixed | **user-resizable**, 320–640 × 360–760 | fixed |
-| Panes | one at a time (tab row) | History + By Service stacked; Settings slides over | one at a time (left-rail nav) |
-| Range selector | pinned segmented control in header | sticky segmented control, scrolls with nothing | compact button in the rail, opens grid/presets |
-| Get to Settings | gear icon → replaces pane | gear icon → slide-over panel | rail nav item |
-| Categories slot | disabled tab, `SOON` | dashed stub at bottom of scroll | rail nav item, 🔒 |
-| By Service detail | list + thin bars, text-only `contentFormat` split | same as A | **bar chart**, `contentFormat` as nested bars |
-| Feels like | a menubar utility (iStat Menus, Bartender) | a notification-center widget | a small standalone window |
+3. **Default pane.** History (G/H) or Trends (I)? Now that Trends is the
+   at-a-glance overview, it's a candidate for the landing screen.
 
-## Open questions for Aryan
+4. **Settings placement.** A fourth tab (G/I) keeps everything in one row but the
+   row gets tight; a gear + slide-over (H) keeps the tab row to the three
+   data panes.
 
-1. **Size ceiling.** AppKit's `NSPopover` has no hard width limit, but menubar
-   convention sits ~320–420 pt wide. A (360) and B (420) are in that band; C (560)
-   reads as a window, not a menu. Is the extra room in C worth breaking the
-   convention, or is By-Service detail better served by keeping it narrow and
-   letting it scroll?
+5. **Service colours.** YouTube (#ff0033) and Netflix (#e50914) are both red —
+   in a stacked Trends bar or a dot they're nearly indistinguishable. The viz
+   needs a palette that departs from brand colours (muted brand + distinct hues,
+   or a fixed categorical set). This blocks Trends looking right.
 
-2. **Fixed vs resizable.** Peer menubar apps are almost all fixed. Resizable (B)
-   costs: a persisted size, a min/max, reflow testing at every width, and a
-   drag handle that competes with the popover's own resize affordance on macOS
-   (there isn't one by default). Worth it, or is "fixed width + height that grows
-   with content up to a max, then scrolls" enough?
+6. **Does History still need the coverage bar?** It's the quietest element on the
+   row. Keep it (answers "did I finish or bail"), or drop it and let the watched-
+   time number stand alone?
 
-3. **One pane at a time, or stacked?** A and C hide two of the three panes behind
-   a click. B shows History and By Service together but pushes Settings out of the
-   way. Which matches how you'd actually use it — jump between panes, or scan them
-   as one feed?
+7. **The week strip under a Month/Custom range.** Right now it still shows the
+   current week as an orientation object while the chips carry the real range.
+   Is that a useful "you are here", or just confusing?
 
-4. **Where does the range selector live when it has to coexist with a Custom
-   grid?** In A/B the grid drops from a pinned header (fine at 360–420 wide). In C
-   it drops from the rail. Any preference for the grid being inline vs a separate
-   sheet?
+## A starting recommendation (react against it)
 
-5. **Categories slot.** Disabled affordance now (A's tab, C's nav row) advertises
-   the future pane and reserves its spot. B's dashed stub does too but eats scroll
-   height. Keep a visible placeholder, or leave it out of v1 entirely and add it
-   when it ships?
-
-6. **By Service — chart or list?** Only C commits to a chart. The `contentFormat`
-   split + `embedded` sub-line is readable as text (A/B) but a chart (C) makes
-   "how much is Shorts" instant. Does that view justify the width it needs?
-
-7. **Provisional "Today" treatment.** All three use: lighter total + `counting`
-   pill + "re-files at ~04:00" note. Is that clear enough that the number isn't
-   final, or does it need to be more explicit (e.g. no number at all until the
-   day closes)?
-
-## A starting recommendation (to react against, not adopt)
-
-**B's information model on A's footprint.** Keep the popover fixed and ~400 pt
-wide. Stack History and By Service the way B does so the two "where did my time
-go" questions share one glance, keep Settings behind a gear as a slide-over, and
-carry C's little bar chart into the By Service section (it fits at 400 if the
-nested bars are compact). Reserve the Categories slot as a disabled header
-affordance, not a scroll-height-eating stub. Skip user-resizing; let height grow
-with content to a cap, then scroll.
-
-One-line why: the primary job is *scanning* three cheap panes, not *operating* a
-dense one — that favours a stacked scroll at menubar width over either a
-tab-switch or a window-sized two-pane.
+**H's top with G's Trends.** One compact range dropdown on top — the week strip
+looks nice but four rows of range chrome is a lot for a menubar popover, and the
+Trends pane already shows the week shape better than a strip can. Land on
+**History**. Keep Settings behind a gear. Vertical columns for Trends. Fix the
+Service palette before judging Trends.
