@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WatchLogs — Menubar layout prototype (round 4: collapsible calendar)</title>
+<title>WatchLogs — Menubar layout prototype (round 5: converged)</title>
 <!--
   PROTOTYPE — throwaway. Answers wayfinder ticket #7 on map #1.
-  Mock data only, no build, no server. Double-click. Switch: bar / arrows / ?variant=J|K
-  Deep links also take &pane=history|services|trends and &range=today|week|month
+  Mock data only, no build, no server. Double-click.
+  Deep links: ?pane=history|services|trends  &range=today|week|month
 
-  Rounds 1-3 (A/B/C, D/E/F, G/H/I) are in this branch's git history.
+  Rounds 1-4 (A/B/C, D/E/F, G/H/I, J/K) are in this branch's git history.
+  This round drops the J/K fork (they read the same) and keeps the calendar
+  COLLAPSED for every preset — the "Aug 25 - Aug 29" label does the orientation.
+  Only Custom expands the month grid; the manual expand toggle still works.
 
-  Round 4 applies:
-    - Trends orientation follows span: <=14 days horizontal, >14 vertical.
-    - Settings is a top-right gear on the title row, not a pane / not a tab.
-    - Calendar defaults to a collapsed week row; a toggle expands it in place to
-      the full month. Picking This Month / Custom expands it; Today / This Week
-      collapse it. No dropdown layer.
-    - No "counting" markers. No watch-time underline on calendar days. No footer.
-    - Summary strip = top 3 domains, icons only, no label.
-
-  J and K differ only in where the presets live:
-    J  preset chips in a row above the calendar
-    K  presets built into the calendar's own header
+  The layout:
+    - Title row: Watch.Logs . <range> . <total>            gear -> settings slide-over
+    - Preset chips: Today / This Week / This Month / Custom
+    - Calendar: collapsed week row + resolved-range label + expand toggle
+    - Summary strip: top 3 domains, icons + time
+    - Tabs: History / By Service / Trends
+    - Trends orientation follows span: <=14 days horizontal, >14 vertical
+    - By Service bars part-to-whole; History bar = video coverage
+    - Viz palette departs from brand (YouTube red / Netflix amber / Twitch purple)
 -->
 <style>
   :root {
@@ -86,8 +86,8 @@
   .calbox { padding: 9px 12px 10px; border-bottom: 1px solid var(--line); }
   .calbox.k { padding-top: 9px; }
   .calbox.k .chips { margin-bottom: 8px; }
-  .cal-sub { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font: 11.5px var(--sans); color: var(--ink-dim); }
-  .cal-sub .mlabel { font-weight: 650; color: var(--ink); }
+  .cal-sub { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font: 11.5px var(--sans); color: var(--ink-dim); }
+  .cal-sub .mlabel { font-weight: 650; color: var(--ink); font-size: 12.5px; font-family: var(--mono); }
   .cal-sub .mnav { border: 0; background: transparent; cursor: pointer; color: var(--ink-dim); font-size: 13px; padding: 0 4px; }
   .cal-sub .tog { margin-left: auto; border: 1px solid var(--line-2); background: var(--card); border-radius: 6px; cursor: pointer; color: var(--ink-dim); font-size: 10px; padding: 2px 7px; }
   .cal-sub .tog:hover { color: var(--ink); }
@@ -240,8 +240,7 @@
   <span class="mb-right"><span class="mb-eye">2h 05m</span><span>Fri 29 Aug&nbsp;&nbsp;9:41 PM</span></span>
 </div>
 <div class="desk"><div class="anchor"><div class="beak"></div><div id="stage"></div><div class="readout" id="readout"></div></div></div>
-<div id="switcher"></div>
-<div class="hint-note">← / → to switch layouts &nbsp;·&nbsp; ?variant=J|K</div>
+<div class="hint-note">converged layout &nbsp;·&nbsp; deep links: ?pane=history|services|trends &nbsp; &amp;range=today|week|month</div>
 
 <script>
 /* ============================================================================
@@ -349,7 +348,7 @@ function rangeResolved() {
    STATE
    ========================================================================== */
 const state = {
-  variant: "J", range: "week",
+  range: "week",
   pane: "history",           // history | services | trends
   collapsed: { "d-mon": true },
   ytExpanded: true,
@@ -587,10 +586,10 @@ function settingsOverlay() {
 }
 
 /* ============================================================================
-   VARIANTS
+   RENDER + EVENTS  (converged to a single layout — see LAYOUT.md)
    ========================================================================== */
-function renderJ() {
-  return `<div class="popover">
+function render() {
+  $("#stage").innerHTML = `<div class="popover">
     ${titleRow()}
     <div class="chips-row">${presetChips()}</div>
     <div class="calbox">${calGrid()}</div>
@@ -599,52 +598,21 @@ function renderJ() {
     <div class="body">${paneBody()}</div>
     ${settingsOverlay()}
   </div>`;
+  $("#readout").textContent = `range=${state.range} · cal=${state.calOpen ? "month grid" : "week row"} · pane=${state.pane} · total=${fmtMins(grandTotal())}`;
 }
-
-function renderK() {
-  return `<div class="popover">
-    ${titleRow()}
-    <div class="calbox k">${presetChips()}${calGrid()}</div>
-    ${serviceStrip()}
-    ${tabRow()}
-    <div class="body">${paneBody()}</div>
-    ${settingsOverlay()}
-  </div>`;
-}
-
-/* ============================================================================
-   RENDER + EVENTS
-   ========================================================================== */
-const RENDERERS = { J: renderJ, K: renderK };
-const NAMES = { J: "Preset chips above the calendar", K: "Presets built into the calendar" };
-const ORDER = ["J", "K"];
-
-function render() {
-  document.body.className = "variant-" + state.variant;
-  $("#stage").innerHTML = RENDERERS[state.variant]();
-  const P = $("#stage .popover");
-  $("#readout").textContent = `variant ${state.variant} · range=${state.range} · cal=${state.calOpen ? "month" : "week"} · pane=${state.pane} · total=${fmtMins(grandTotal())}`;
-  $("#switcher").innerHTML = `<button data-cycle="-1">‹</button><span class="label"><b>${state.variant}</b><span>${NAMES[state.variant]}</span></span><button data-cycle="1">›</button>`;
-}
-
-function setVariant(v) {
-  state.variant = v; state.settingsOpen = false;
-  const u = new URL(location.href); u.searchParams.set("variant", v); history.replaceState(null, "", u);
-  render();
-}
-function cycle(dir) { setVariant(ORDER[(ORDER.indexOf(state.variant) + dir + ORDER.length) % ORDER.length]); }
 
 function pickRange(k) {
   state.range = k;
-  if (k === "custom") { state.calOpen = true; }
-  else { state.customStart = state.customEnd = null; state.calOpen = (k === "month"); }
+  // calendar stays collapsed for every preset — the resolved-range label carries
+  // the orientation. Only Custom needs the full grid to pick arbitrary days.
+  state.calOpen = (k === "custom");
+  if (k !== "custom") state.customStart = state.customEnd = null;
   render();
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-cycle],[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-cal-toggle],[data-settings-open],[data-settings-close],[data-toggle-login],[data-day]");
+  const t = e.target.closest("[data-range],[data-pane],[data-day-toggle],[data-svc-toggle],[data-cal],[data-cal-toggle],[data-settings-open],[data-settings-close],[data-toggle-login],[data-day]");
   if (!t) return;
-  if (t.dataset.cycle) return cycle(+t.dataset.cycle);
   if (t.dataset.range) return pickRange(t.dataset.range);
   if (t.dataset.pane) { state.pane = t.dataset.pane; return render(); }
   if (t.dataset.dayToggle) { state.collapsed[t.dataset.dayToggle] = !state.collapsed[t.dataset.dayToggle]; return render(); }
@@ -668,20 +636,11 @@ document.addEventListener("click", (e) => {
   }
 });
 
-document.addEventListener("keydown", (e) => {
-  const ae = document.activeElement || document.body;
-  if (["INPUT", "TEXTAREA"].includes(ae.tagName) || ae.isContentEditable) return;
-  if (e.key === "ArrowLeft") cycle(-1);
-  if (e.key === "ArrowRight") cycle(1);
-});
-
 const bp = new URL(location.href).searchParams;
-const bv = bp.get("variant");
-if (bv && ORDER.includes(bv.toUpperCase())) state.variant = bv.toUpperCase();
 const bpane = bp.get("pane");
 if (["history", "services", "trends"].includes(bpane)) state.pane = bpane;
 const brange = bp.get("range");
-if (["today", "week", "month"].includes(brange)) { state.range = brange; state.calOpen = (brange === "month"); }
+if (["today", "week", "month"].includes(brange)) state.range = brange;
 render();
 </script>
 </body>
