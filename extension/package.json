@@ -1,0 +1,10 @@
+{
+  "name": "watchlogs-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tracer-bullet Chromium extension for WatchLogs issue #26.",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  }
+}

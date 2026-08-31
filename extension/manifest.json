@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "WatchLogs (loopback handshake)",
+  "version": "0.1.0",
+  "description": "Tracer-bullet extension for issue #26 — pairs with the WatchLogs App and posts a heartbeat Flush.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "WatchLogs"
+  }
+}
