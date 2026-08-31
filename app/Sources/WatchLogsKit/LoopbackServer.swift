@@ -192,6 +192,8 @@ public final class LoopbackServer: @unchecked Sendable {
                     self.respond(.json(status: 400, ["error": reason]), on: connection)
                 case .unsupportedSchemaVersion:
                     self.respond(.json(status: 415, ["error": "schemaVersion"]), on: connection)
+                case .storageFailure:
+                    self.respond(.json(status: 500, ["error": "storage"]), on: connection)
                 }
             }
 

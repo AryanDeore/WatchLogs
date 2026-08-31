@@ -13,7 +13,18 @@ set -euo pipefail
 PORT="${1:-48920}"
 INTERVAL="${2:-3}"
 
-TOKEN="$(security find-generic-password -s com.watchlogs.app -a loopback-token -w)"
+# Fail loudly on a non-numeric argument. Without this a stray token lands in the
+# URL as `http://127.0.0.1:<junk>/…`, which curl silently reads as port 80.
+for pair in "port:${PORT}" "interval-seconds:${INTERVAL}"; do
+  if [[ ! "${pair#*:}" =~ ^[0-9]+$ ]]; then
+    echo "${pair%%:*} must be a number, got '${pair#*:}'" >&2
+    echo "usage: $0 [port] [interval-seconds]" >&2
+    exit 2
+  fi
+done
+
+# WATCHLOGS_TOKEN overrides the Keychain lookup — handy against a test server.
+TOKEN="${WATCHLOGS_TOKEN:-$(security find-generic-password -s com.watchlogs.app -a loopback-token -w)}"
 if [[ -z "${TOKEN}" ]]; then
   echo "no token in the Keychain — start the app once (swift run WatchLogs) so it mints one" >&2
   exit 1

@@ -11,7 +11,8 @@ struct PortRollAndConcurrencyTests {
         // Occupy the default port with a first service.
         let firstConfig = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort)
         let first = try LoopbackTransport(
-            version: "0.1.0", tokenStore: InMemoryTokenStore(), config: firstConfig
+            version: "0.1.0", tokenStore: InMemoryTokenStore(),
+            store: try EventStore(path: ":memory:"), config: firstConfig
         )
         try first.start()
         defer { first.stop() }
@@ -20,7 +21,8 @@ struct PortRollAndConcurrencyTests {
         // A second service asked for the same default port must land elsewhere.
         let secondConfig = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort)
         let second = try LoopbackTransport(
-            version: "0.1.0", tokenStore: InMemoryTokenStore(), config: secondConfig
+            version: "0.1.0", tokenStore: InMemoryTokenStore(),
+            store: try EventStore(path: ":memory:"), config: secondConfig
         )
         try second.start()
         defer { second.stop() }
@@ -43,11 +45,17 @@ struct PortRollAndConcurrencyTests {
         let basePort = Int.random(in: 49_200..<52_000)
         let config = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort, portRollAttempts: 1)
 
-        let holder = try LoopbackTransport(version: "0.1.0", tokenStore: InMemoryTokenStore(), config: config)
+        let holder = try LoopbackTransport(
+            version: "0.1.0", tokenStore: InMemoryTokenStore(),
+            store: try EventStore(path: ":memory:"), config: config
+        )
         try holder.start()
         defer { holder.stop() }
 
-        let blocked = try LoopbackTransport(version: "0.1.0", tokenStore: InMemoryTokenStore(), config: config)
+        let blocked = try LoopbackTransport(
+            version: "0.1.0", tokenStore: InMemoryTokenStore(),
+            store: try EventStore(path: ":memory:"), config: config
+        )
         #expect(throws: LoopbackServer.StartError.self) {
             try blocked.start()
         }
@@ -55,11 +63,11 @@ struct PortRollAndConcurrencyTests {
 
     @Test("overlapping Flushes are serialised — never more than one in ingest at a time")
     func concurrentFlushesSerialised() throws {
-        let sink = InMemoryEventSink()
+        let store = try EventStore(path: ":memory:")
         let basePort = Int.random(in: 49_200..<52_000)
         let config = LoopbackServer.Config(version: "0.1.0", defaultPort: basePort)
         // Widen the ingest critical section so a real race would be caught.
-        let ingest = Ingest(clock: SystemClock(), sink: sink, criticalSectionPadding: 0.03)
+        let ingest = Ingest(clock: SystemClock(), store: store, criticalSectionPadding: 0.03)
         let tokenStore = InMemoryTokenStore(token: Token.generate())
         let token = try #require(try tokenStore.load())
         let server = LoopbackServer(config: config, tokenProvider: { token.raw }, ingest: ingest)
@@ -89,6 +97,6 @@ struct PortRollAndConcurrencyTests {
         #expect(statuses.count == 6)
         #expect(statuses.allSatisfy { $0 == 200 })
         #expect(ingest.maxObservedConcurrency == 1)
-        #expect(sink.appendCalls == 6)
+        #expect(try store.counts().flushes == 6)
     }
 }

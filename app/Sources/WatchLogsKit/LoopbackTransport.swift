@@ -11,28 +11,39 @@ import Foundation
 /// working immediately.
 public final class LoopbackTransport: @unchecked Sendable {
     public let server: LoopbackServer
+    /// The Event log and read model every Flush lands in, and the menubar reads.
+    public let store: EventStore
 
     private let tokenStore: TokenStore
+    private let clock: Clock
     private let token: Locked<Token>
 
     public init(
         version: String,
         tokenStore: TokenStore,
+        store: EventStore,
         clock: Clock = SystemClock(),
-        sink: EventSink = InMemoryEventSink(),
         config: LoopbackServer.Config? = nil,
         onFlush: (@Sendable () -> Void)? = nil
     ) throws {
         self.tokenStore = tokenStore
+        self.store = store
+        self.clock = clock
         let held = Locked<Token>(try tokenStore.loadOrCreate())
         self.token = held
 
-        let ingest = Ingest(clock: clock, sink: sink, onAccepted: onFlush)
+        let ingest = Ingest(clock: clock, store: store, onAccepted: onFlush)
         self.server = LoopbackServer(
             config: config ?? LoopbackServer.Config(version: version),
             tokenProvider: { held.current.raw },
             ingest: ingest
         )
+    }
+
+    /// Watched and Background time for the naive local calendar day containing
+    /// `now` — the menubar's "Watched today" number.
+    public func todayTotals() throws -> Totals {
+        try store.totals(in: DateRange.day(containing: clock.now()))
     }
 
     /// Bind the server (rolling the port on collision).

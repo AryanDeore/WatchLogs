@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             transport = try LoopbackTransport(
                 version: Self.version,
                 tokenStore: KeychainTokenStore(),
+                store: EventStore(path: try EventStore.defaultPath()),
                 onFlush: {
                     lastFlush.set(Date())
                     Task { @MainActor in AppDelegate.shared?.rebuildMenu() }
@@ -58,8 +59,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MenubarStatus.evaluate(lastFlushAt: lastFlush.current, now: Date())
     }
 
+    /// The headline number, or a short explanation of why there isn't one.
+    private func watchedTodayLine() -> String {
+        guard let totals = try? transport.todayTotals() else {
+            return "Watched today · unavailable"
+        }
+        return WatchedTimeLine.today(totals)
+    }
+
     private func rebuildMenu() {
         let menu = NSMenu()
+
+        let watchedRow = NSMenuItem(title: watchedTodayLine(), action: nil, keyEquivalent: "")
+        watchedRow.isEnabled = false
+        menu.addItem(watchedRow)
 
         let status = currentStatus()
         let statusRow = NSMenuItem(title: status.line, action: nil, keyEquivalent: "")

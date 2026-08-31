@@ -59,6 +59,13 @@ struct RawHTTPClient {
         guard fd >= 0 else { throw ClientError.connectFailed(errno) }
         defer { close(fd) }
 
+        // The server answers some requests before reading their body — a 413 on
+        // an oversized one — and closes. Without this, the write below raises
+        // SIGPIPE and takes the whole test process down with it; with it, the
+        // write just fails and we can go read the response the server did send.
+        var noSignal: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = in_port_t(UInt16(port).bigEndian)
@@ -76,8 +83,14 @@ struct RawHTTPClient {
             let sent = toSend.withUnsafeBytes { buffer in
                 write(fd, buffer.baseAddress, buffer.count)
             }
-            guard sent > 0 else { throw ClientError.sendFailed }
-            toSend.removeFirst(sent)
+            if sent > 0 {
+                toSend.removeFirst(sent)
+                continue
+            }
+            // The peer hung up mid-write: it has already decided about this
+            // request. Whatever it replied is still in our receive buffer.
+            if sent < 0, errno == EPIPE || errno == ECONNRESET { break }
+            throw ClientError.sendFailed
         }
 
         var response = Data()

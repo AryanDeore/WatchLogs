@@ -1,19 +1,20 @@
 import Foundation
 
-/// Turns a raw request body into an `IngestOutcome`.
+/// Turns a raw request body into an `IngestOutcome`: decode the Flush, hand it to
+/// the store, answer with an Ack.
 ///
-/// Delivery is **at-least-once** (ADR 0002): the App keeps no memory of Flushes
-/// it has already seen. A resent Flush is simply processed again and acked again;
-/// downstream de-duplication on stable Event ids (slice 2) is what keeps a
-/// re-delivered batch from inflating anything. For a `views: []` heartbeat a
-/// resend stores nothing either way.
+/// Delivery is at-least-once (ADR 0002). The Extension resends a batch whose Ack
+/// it never saw, reusing the same `flushId`; the store replays that Flush's
+/// original Ack and stores nothing, so a resend never moves a total. Duplicate
+/// Events arriving under a *new* `flushId` are stored — the log is append-only —
+/// and de-duplicated on `(viewId, seq)` when Segments are recomputed.
 ///
 /// Lock-guarded rather than an `actor` so the loopback server can call it
 /// synchronously and keep "one request in flight at a time" literally true —
 /// there is no `await` point where a second request could interleave.
 public final class Ingest: @unchecked Sendable {
     private let clock: Clock
-    private let sink: EventSink
+    private let store: EventStore
     private let onAccepted: (@Sendable () -> Void)?
     private let lock = NSLock()
 
@@ -26,20 +27,20 @@ public final class Ingest: @unchecked Sendable {
 
     public convenience init(
         clock: Clock,
-        sink: EventSink,
+        store: EventStore,
         onAccepted: (@Sendable () -> Void)? = nil
     ) {
-        self.init(clock: clock, sink: sink, criticalSectionPadding: 0, onAccepted: onAccepted)
+        self.init(clock: clock, store: store, criticalSectionPadding: 0, onAccepted: onAccepted)
     }
 
     init(
         clock: Clock,
-        sink: EventSink,
+        store: EventStore,
         criticalSectionPadding: TimeInterval,
         onAccepted: (@Sendable () -> Void)? = nil
     ) {
         self.clock = clock
-        self.sink = sink
+        self.store = store
         self.criticalSectionPadding = criticalSectionPadding
         self.onAccepted = onAccepted
     }
@@ -65,16 +66,15 @@ public final class Ingest: @unchecked Sendable {
             return .unsupportedSchemaVersion
 
         case .ok(let envelope):
-            try? sink.append(flushId: envelope.flushId, views: envelope.views)
-            let ack = Ack(
-                flushId: envelope.flushId,
-                // Heartbeat views are empty; per-View ackSeq lands with Segment
-                // computation (slice 2).
-                views: envelope.views.map { Ack.ViewAck(viewId: $0.viewId, ackSeq: 0) },
-                serverTime: clock.now().epochMillis
-            )
-            onAccepted?()
-            return .accepted(ack)
+            do {
+                let ack = try store.record(envelope, serverTime: clock.now().epochMillis)
+                onAccepted?()
+                return .accepted(ack)
+            } catch {
+                // Never ack a batch we failed to store: the Extension would prune
+                // it. A 500 means "keep it and retry".
+                return .storageFailure
+            }
         }
     }
 }

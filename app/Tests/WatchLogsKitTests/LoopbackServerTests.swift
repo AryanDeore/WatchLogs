@@ -8,24 +8,25 @@ struct LoopbackServerTests {
 
     /// Bring up a service on a random high port so parallel machines / other
     /// tests don't collide. Returns the service, a client pointed at it, and the
-    /// sink so tests can assert on what was stored.
+    /// store so tests can assert on what was stored. The store is a real SQLite
+    /// database held in memory — the same SQL production runs.
     static func makeService(
         clock: Clock = SystemClock(),
         basePort: Int? = nil
-    ) throws -> (service: LoopbackTransport, client: RawHTTPClient, sink: InMemoryEventSink) {
-        let sink = InMemoryEventSink()
+    ) throws -> (service: LoopbackTransport, client: RawHTTPClient, store: EventStore) {
+        let store = try EventStore(path: ":memory:")
         let port = basePort ?? Int.random(in: 49_200..<52_000)
         let config = LoopbackServer.Config(version: "0.1.0", defaultPort: port)
         let service = try LoopbackTransport(
             version: "0.1.0",
             tokenStore: InMemoryTokenStore(),
+            store: store,
             clock: clock,
-            sink: sink,
             config: config
         )
         try service.start()
         let client = RawHTTPClient(host: "127.0.0.1", port: try #require(service.boundPort))
-        return (service, client, sink)
+        return (service, client, store)
     }
 
     static func heartbeatBody(flushId: String = UUID().uuidString, schemaVersion: Int = 1) -> Data {
@@ -60,7 +61,7 @@ struct LoopbackServerTests {
     @Test("a valid heartbeat returns a well-formed Ack")
     func heartbeatAck() throws {
         let clock = ManualClock(Date(timeIntervalSince1970: 1_700_000_123))
-        let (service, client, sink) = try Self.makeService(clock: clock)
+        let (service, client, store) = try Self.makeService(clock: clock)
         defer { service.stop() }
 
         let flushId = UUID().uuidString
@@ -78,14 +79,14 @@ struct LoopbackServerTests {
         #expect(json["views"] as? [Any] != nil)
         #expect((json["views"] as? [Any])?.isEmpty == true)
         #expect(json["serverTime"] as? Int == 1_700_000_123_000)
-        #expect(sink.appendCalls == 1)
+        #expect(try store.counts().flushes == 1)
     }
 
     // MARK: - Auth
 
     @Test("a missing token is 401 and the body is never read")
     func missingTokenIs401BeforeBody() throws {
-        let (service, client, sink) = try Self.makeService()
+        let (service, client, store) = try Self.makeService()
         defer { service.stop() }
 
         let response = try client.send(
@@ -97,12 +98,12 @@ struct LoopbackServerTests {
 
         #expect(response.status == 401)
         #expect(service.server.bodyBytesRead == 0)
-        #expect(sink.appendCalls == 0)
+        #expect(try store.counts() == EventStore.Counts())
     }
 
     @Test("a wrong token is 401 and the body is never read")
     func wrongTokenIs401BeforeBody() throws {
-        let (service, client, sink) = try Self.makeService()
+        let (service, client, store) = try Self.makeService()
         defer { service.stop() }
 
         let response = try client.send(
@@ -114,7 +115,7 @@ struct LoopbackServerTests {
 
         #expect(response.status == 401)
         #expect(service.server.bodyBytesRead == 0)
-        #expect(sink.appendCalls == 0)
+        #expect(try store.counts() == EventStore.Counts())
     }
 
     // MARK: - CORS preflight
@@ -135,7 +136,7 @@ struct LoopbackServerTests {
 
     @Test("an unknown schemaVersion is 415 {error:schemaVersion} and stores nothing")
     func unknownSchemaVersionRejected() throws {
-        let (service, client, sink) = try Self.makeService()
+        let (service, client, store) = try Self.makeService()
         defer { service.stop() }
 
         let response = try client.send(
@@ -147,12 +148,12 @@ struct LoopbackServerTests {
 
         #expect(response.status == 415)
         #expect(response.json()?["error"] as? String == "schemaVersion")
-        #expect(sink.appendCalls == 0)
+        #expect(try store.counts() == EventStore.Counts())
     }
 
     @Test("malformed JSON is 400")
     func malformedJSONRejected() throws {
-        let (service, client, sink) = try Self.makeService()
+        let (service, client, store) = try Self.makeService()
         defer { service.stop() }
 
         let response = try client.send(
@@ -162,14 +163,14 @@ struct LoopbackServerTests {
             body: Data("{not json".utf8)
         )
         #expect(response.status == 400)
-        #expect(sink.appendCalls == 0)
+        #expect(try store.counts() == EventStore.Counts())
     }
 
     // MARK: - Body cap
 
     @Test("a body larger than 1 MiB is rejected 413 and not read")
     func oversizedBodyRejected() throws {
-        let (service, client, sink) = try Self.makeService()
+        let (service, client, store) = try Self.makeService()
         defer { service.stop() }
 
         let response = try client.send(
@@ -180,7 +181,7 @@ struct LoopbackServerTests {
         )
         #expect(response.status == 413)
         #expect(service.server.bodyBytesRead == 0)
-        #expect(sink.appendCalls == 0)
+        #expect(try store.counts() == EventStore.Counts())
     }
 
     @Test("a body of exactly 1 MiB is allowed through to ingest")
@@ -208,11 +209,13 @@ struct LoopbackServerTests {
 
     // MARK: - At-least-once (ADR 0002)
 
-    @Test("re-sending a Flush with the same flushId is accepted again — no front-door de-dup")
-    func resentFlushIsAcceptedAgain() throws {
-        // ADR 0002: the App keeps no memory of Flushes it has seen. A resend is
-        // processed and acked again; a heartbeat carries nothing to double-count.
-        let (service, client, sink) = try Self.makeService()
+    @Test("re-sending a Flush with the same flushId replays the stored Ack")
+    func resentFlushReplaysTheStoredAck() throws {
+        // ADR 0002 + SCHEMA §7: the Extension resends a batch whose Ack it never
+        // saw, reusing the flushId. The App replays the first Ack verbatim —
+        // right down to its serverTime — and stores nothing the second time.
+        let clock = ManualClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let (service, client, store) = try Self.makeService(clock: clock)
         defer { service.stop() }
 
         let flushId = UUID().uuidString
@@ -220,6 +223,7 @@ struct LoopbackServerTests {
             method: "POST", path: "/v1/flush",
             headers: bearer(service), body: Self.heartbeatBody(flushId: flushId)
         )
+        clock.advance(by: 30)
         let second = try client.send(
             method: "POST", path: "/v1/flush",
             headers: bearer(service), body: Self.heartbeatBody(flushId: flushId)
@@ -228,9 +232,10 @@ struct LoopbackServerTests {
         #expect(first.status == 200)
         #expect(second.status == 200)
         #expect(first.json()?["flushId"] as? String == flushId)
-        #expect(second.json()?["flushId"] as? String == flushId)
         #expect(second.json()?["accepted"] as? Bool == true)
-        #expect(sink.appendCalls == 2)
+        // Replayed, not recomputed: the second Ack carries the first one's clock.
+        #expect(second.json()?["serverTime"] as? Int == 1_700_000_000_000)
+        #expect(try store.counts().flushes == 1)
     }
 
     // MARK: - Regenerate
