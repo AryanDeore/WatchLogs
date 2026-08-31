@@ -47,3 +47,24 @@ public enum MenubarStatus: Equatable, Sendable {
         return "\(seconds / 60) min"
     }
 }
+
+/// The menubar's "Watched today" line — the one number the App puts in front of
+/// the user this slice, read from `totals(today)`.
+///
+/// Formatting matches the popover prototype (`prototypes/menubar-layout/`):
+/// `2h 05m` at the hour scale, dropping to minutes and then seconds so a
+/// just-started session shows something other than `0h 00m`.
+public enum WatchedTimeLine {
+    public static func today(_ totals: Totals) -> String {
+        "Watched today · \(duration(milliseconds: totals.watchedMs))"
+    }
+
+    /// Milliseconds in, one rounding to whole seconds, out.
+    public static func duration(milliseconds: Int) -> String {
+        let seconds = Totals.seconds(max(0, milliseconds))
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+        return String(format: "%dh %02dm", minutes / 60, minutes % 60)
+    }
+}

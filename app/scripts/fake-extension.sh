@@ -13,7 +13,8 @@ set -euo pipefail
 PORT="${1:-48920}"
 INTERVAL="${2:-3}"
 
-TOKEN="$(security find-generic-password -s com.watchlogs.app -a loopback-token -w)"
+# WATCHLOGS_TOKEN overrides the Keychain lookup — handy against a test server.
+TOKEN="${WATCHLOGS_TOKEN:-$(security find-generic-password -s com.watchlogs.app -a loopback-token -w)}"
 if [[ -z "${TOKEN}" ]]; then
   echo "no token in the Keychain — start the app once (swift run WatchLogs) so it mints one" >&2
   exit 1

@@ -1,0 +1,360 @@
+import Foundation
+import Testing
+@testable import WatchLogsKit
+
+/// The Segment state machine (ADR 0003), driven the way the App drives it: a
+/// whole View log in, Segments out. Every case here is a rule that would be
+/// expensive to get wrong once Segments are stored.
+@Suite("Segment computation")
+struct SegmentComputationTests {
+    private let viewId = "view-1"
+
+    private func segments(_ log: EventLogBuilder) -> [Segment] {
+        SegmentComputer.segments(viewId: viewId, events: log.events)
+    }
+
+    // MARK: - Wall clock, not media time
+
+    @Test("60 s of wall clock at 2× is 60 s of Watched time")
+    func doubleRateStillCountsWallClock() {
+        var log = EventLogBuilder()
+        log.mediaFound(0)
+        log.play(0, pos: 0)
+        log.ratechange(1_000, rate: 2.0, pos: 1.0)
+        for second in stride(from: 5_000, through: 55_000, by: 5_000) {
+            log.sample(second, pos: Double(second) / 500)
+        }
+        log.viewEnded(60_000, reason: "nav", pos: 120)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].kind == .watched)
+        #expect(computed[0].durationMs == 60_000)
+        // 120 s of media consumed in 60 s of real time — the media range records
+        // the 2×, the Watched time does not.
+        #expect(computed[0].posEnd == 120)
+    }
+
+    // MARK: - Seeks
+
+    @Test("a backward seek yields two Segments over the re-watched range, both counting")
+    func backwardSeekCountsTwice() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+        log.seeked(10_000, from: 10, to: 5)
+        log.sample(15_000, pos: 10)
+        log.viewEnded(20_000, reason: "nav", pos: 15)
+
+        let computed = segments(log)
+        #expect(computed.count == 2)
+        #expect(computed.allSatisfy { $0.kind == .watched })
+        // The 5 s → 10 s stretch is covered twice and counts twice.
+        #expect(computed[0].posStart == 0)
+        #expect(computed[0].posEnd == 10)
+        #expect(computed[1].posStart == 5)
+        #expect(computed[1].posEnd == 15)
+        #expect(computed.reduce(0) { $0 + $1.durationMs } == 20_000)
+        // No wall-clock gap: the split is instantaneous.
+        #expect(computed[0].wallEndMs == computed[1].wallStartMs)
+    }
+
+    @Test("a forward seek leaves the skipped range covered by no Segment")
+    func forwardSeekSkipsARange() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.seeked(6_000, from: 6, to: 100)
+        log.sample(11_000, pos: 105)
+        log.viewEnded(12_000, reason: "nav", pos: 106)
+
+        let computed = segments(log)
+        #expect(computed.count == 2)
+        #expect(computed[0].posEnd == 6)
+        #expect(computed[1].posStart == 100)
+        // 6 s → 100 s of the video is inside no Segment at all.
+        let covers = { (position: Double) in
+            computed.contains { ($0.posStart ?? 0) <= position && position <= ($0.posEnd ?? 0) }
+        }
+        #expect(!covers(50))
+        #expect(covers(3))
+        #expect(covers(103))
+    }
+
+    @Test("Segments shorter than 1000 ms after seek-splitting are discarded")
+    func noiseFloorDiscardsSlivers() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        // Two quick scrubs: 400 ms and 500 ms of playback, both below the floor.
+        log.seeked(400, from: 0.4, to: 30)
+        log.seeked(900, from: 30.5, to: 60)
+        log.sample(5_000, pos: 64)
+        log.viewEnded(6_000, reason: "nav", pos: 65)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].posStart == 60)
+        #expect(computed[0].durationMs == 5_100)
+    }
+
+    // MARK: - Foreground, background, PiP
+
+    @Test("playing while hidden accrues background only")
+    func hiddenTabAccruesBackgroundOnly() {
+        var log = EventLogBuilder()
+        log.mediaFound(0)
+        log.hidden(0)
+        log.play(1_000, pos: 0)
+        log.sample(6_000, playing: true, visible: false, pos: 5)
+        log.sample(11_000, playing: true, visible: false, pos: 10)
+        log.viewEnded(11_000, reason: "tab-closed", pos: 10)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].kind == .background)
+        #expect(computed[0].durationMs == 10_000)
+    }
+
+    @Test("losing the foreground splits watched into background with no wall-clock gap")
+    func hiddenSplitsTheSegment() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.hidden(7_000, pos: 7)
+        log.sample(12_000, playing: true, visible: false, pos: 12)
+        log.viewEnded(12_000, reason: "tab-closed", pos: 12)
+
+        let computed = segments(log)
+        #expect(computed.map(\.kind) == [.watched, .background])
+        #expect(computed[0].durationMs == 7_000)
+        #expect(computed[1].durationMs == 5_000)
+        #expect(computed[0].wallEndMs == computed[1].wallStartMs)
+    }
+
+    @Test("Picture-in-Picture keeps a hidden tab's playback Watched")
+    func pipCountsAsForeground() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.pipEnter(1_000, pos: 1)
+        log.hidden(2_000, pos: 2)
+        log.sample(7_000, playing: true, visible: false, pos: 7)
+        log.viewEnded(10_000, reason: "nav", pos: 10)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].kind == .watched)
+        #expect(computed[0].durationMs == 10_000)
+    }
+
+    @Test("leaving PiP with the tab still hidden drops the rest to background")
+    func pipLeaveWhileHiddenBecomesBackground() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.pipEnter(0, pos: 0)
+        log.hidden(1_000, pos: 1)
+        log.sample(5_000, playing: true, visible: false, pos: 5)
+        log.pipLeave(6_000, pos: 6)
+        log.sample(11_000, playing: true, visible: false, pos: 11)
+        log.viewEnded(11_000, reason: "tab-closed", pos: 11)
+
+        let computed = segments(log)
+        #expect(computed.map(\.kind) == [.watched, .background])
+        #expect(computed[0].durationMs == 6_000)
+        #expect(computed[1].durationMs == 5_000)
+    }
+
+    // MARK: - Conservative loss-bounding
+
+    @Test("a missing pause closes the Segment at the last confirming sample")
+    func missingPauseClosesAtLastConfirmation() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+        // The `pause` Event never arrived; this heartbeat only reveals the stop.
+        log.sample(15_000, playing: false, pos: 10)
+        log.viewEnded(16_000, reason: "nav", pos: 10)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].durationMs == 10_000)
+        #expect(computed[0].posEnd == 10)
+    }
+
+    @Test("a missing hidden splits at the last confirming sample and reopens at the revealing one")
+    func missingHiddenExcludesTheUncertainGap() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        // No `hidden` Event: this heartbeat is the first news of it.
+        log.sample(10_000, playing: true, visible: false, pos: 10)
+        log.sample(15_000, playing: true, visible: false, pos: 15)
+        log.viewEnded(15_000, reason: "tab-closed", pos: 15)
+
+        let computed = segments(log)
+        #expect(computed.map(\.kind) == [.watched, .background])
+        // The 5 s → 10 s window could have been either; it counts for neither.
+        #expect(computed[0].wallStartMs == log.at(0))
+        #expect(computed[0].wallEndMs == log.at(5_000))
+        #expect(computed[1].wallStartMs == log.at(10_000))
+        #expect(computed[1].wallEndMs == log.at(15_000))
+    }
+
+    @Test("a resumed-by-heartbeat playback starts at the sample that first confirmed it")
+    func revealedResumeStartsAtTheSample() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.pause(2_000, pos: 2)
+        // The `play` Event never arrived.
+        log.sample(10_000, playing: true, pos: 8)
+        log.sample(15_000, playing: true, pos: 13)
+        log.viewEnded(15_000, reason: "nav", pos: 13)
+
+        let computed = segments(log)
+        #expect(computed.map(\.durationMs) == [2_000, 5_000])
+        #expect(computed[1].wallStartMs == log.at(10_000))
+    }
+
+    @Test("a crash-recovered viewEnded closes the tail at the last sample")
+    func crashRecoveredClosesAtLastSample() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+        // The Extension stamps the recovered end at the last sample; even a
+        // stamp of "now", hours later, must not extrapolate the tail.
+        log.viewEnded(3_600_000, reason: "crash-recovered", pos: 10)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].wallEndMs == log.at(10_000))
+        #expect(computed[0].durationMs == 10_000)
+        #expect(!computed[0].provisional)
+    }
+
+    // MARK: - Open Views
+
+    @Test("the trailing Segment of an open View is provisional and stops at the last sample")
+    func openViewTailIsProvisional() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].provisional)
+        #expect(computed[0].wallEndMs == log.at(10_000))
+    }
+
+    @Test("a closed View has no provisional Segment")
+    func closedViewIsFinal() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.viewEnded(6_000, reason: "nav", pos: 6)
+
+        #expect(segments(log).allSatisfy { !$0.provisional })
+    }
+
+    // MARK: - Identity, ordering, clocks
+
+    @Test("duplicate Events change nothing — identity is (viewId, seq), not the timestamp")
+    func duplicatesAreDiscarded() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+        log.viewEnded(12_000, reason: "nav", pos: 12)
+
+        let once = segments(log)
+
+        // The same batch re-delivered, its copies re-stamped by a later clock.
+        // The append-only log keeps both; the first delivery of a `seq` is the
+        // one that counts, so the later stamps move nothing.
+        var redelivered = log.events
+        redelivered += log.events.map { event in
+            var copy = event
+            copy.t += 60_000
+            return copy
+        }
+
+        #expect(SegmentComputer.segments(viewId: viewId, events: redelivered) == once)
+    }
+
+    @Test("`seq` orders the log, not the order the Events happen to arrive in")
+    func seqIsTheOrderingAuthority() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.hidden(7_000, pos: 7)
+        log.sample(12_000, playing: true, visible: false, pos: 12)
+        log.viewEnded(12_000, reason: "tab-closed", pos: 12)
+
+        #expect(SegmentComputer.segments(viewId: viewId, events: log.events.shuffled()) == segments(log))
+    }
+
+    @Test("an Event whose clock stepped backwards is clamped up, never reordered")
+    func backwardClockIsClamped() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(-2_000, pos: 10) // the machine's clock jumped back
+        log.viewEnded(8_000, reason: "nav", pos: 13)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        // Clamped to its predecessor: the backward sample adds no time and takes
+        // none away.
+        #expect(computed[0].wallStartMs == log.at(0))
+        #expect(computed[0].wallEndMs == log.at(8_000))
+        #expect(computed.allSatisfy { $0.durationMs >= 0 })
+    }
+
+    @Test("events that never open or close a Segment leave one span")
+    func nonBoundaryEventsAreInert() {
+        var log = EventLogBuilder()
+        log.mediaFound(0)
+        log.metadataChange(500)
+        log.play(1_000, pos: 0)
+        log.ratechange(3_000, rate: 1.5, pos: 2)
+        log.metadataChange(4_000, pos: 3)
+        log.unknown("someFutureEvent", 5_000)
+        log.sample(6_000, pos: 6)
+        log.viewEnded(11_000, reason: "nav", pos: 11)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].durationMs == 10_000)
+    }
+
+    @Test("a natural end stops the clock")
+    func endedClosesTheSegment() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.ended(10_000, pos: 10)
+        // The tab sat on the ended video for another minute.
+        log.sample(70_000, playing: false, pos: 10)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].durationMs == 10_000)
+    }
+
+    @Test("a live stream with no reported position still accrues wall-clock time")
+    func liveStreamHasNullPositions() {
+        var log = EventLogBuilder()
+        log.play(0)
+        log.sample(5_000)
+        log.sample(10_000)
+        log.viewEnded(10_000, reason: "nav")
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].durationMs == 10_000)
+        #expect(computed[0].posStart == nil)
+        #expect(computed[0].posEnd == nil)
+    }
+}
