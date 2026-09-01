@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>stall</title></head>
+<body>
+<!-- A player driven by hand through MediaSource: `wlArmStall` appends the
+     first few ~1s segments and starts playback; `wlResumeStall` appends the
+     rest whenever the test calls it. Playback runs the initial buffer dry
+     and genuinely stalls in between — a real, exactly-timed stall and
+     recovery instead of racing a socket. -->
+<video id="v" muted playsinline></video>
+<script>
+  let sourceBuffer;
+  let restChunks;
+
+  function toBytes(base64) {
+    return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  }
+
+  function appendChunk(buffer, bytes) {
+    return new Promise((resolve, reject) => {
+      buffer.addEventListener("updateend", resolve, { once: true });
+      buffer.addEventListener("error", reject, { once: true });
+      buffer.appendBuffer(bytes);
+    });
+  }
+
+  window.wlArmStall = async (initialChunkCount) => {
+    const response = await fetch("/fixtures/stall-chunks.json");
+    const chunks = (await response.json()).map(toBytes);
+
+    const video = document.getElementById("v");
+    const mediaSource = new MediaSource();
+    video.src = URL.createObjectURL(mediaSource);
+    await new Promise((resolve) => mediaSource.addEventListener("sourceopen", resolve, { once: true }));
+    sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs="vp8"');
+
+    for (let i = 0; i < initialChunkCount; i++) await appendChunk(sourceBuffer, chunks[i]);
+    restChunks = chunks.slice(initialChunkCount);
+    await video.play();
+  };
+
+  window.wlResumeStall = async () => {
+    for (const bytes of restChunks) await appendChunk(sourceBuffer, bytes);
+  };
+</script>
+</body>
+</html>

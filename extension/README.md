@@ -17,6 +17,11 @@ no "background" label — those are all the App's job (see `CONTEXT.md`).
 
 The pairing string lives in `chrome.storage.local` — never in a bundled file.
 
+Reloading an unpacked extension (the ↻ on its card in `chrome://extensions`)
+kills the content script in every tab that was already open — MV3 does not
+re-inject it — so a tab you were using for manual QA before the reload will
+look paired but silently capture nothing until you refresh it.
+
 ## How the two halves split the work
 
 | | page helper (`content.js`) | background worker (`background.js`) |
@@ -92,9 +97,35 @@ worker, App — through the real modules with only storage and the network faked
 `ExtensionCaptureTests` ingests, so the two languages are tested against the same
 bytes; `test/fixture.test.js` fails if the committed fixture drifts.
 
-The DOM wiring in `content.js` and the `chrome.*` calls in `background.js` are
-exercised by loading the unpacked extension against a running App (manual QA
-above).
+### content.js: the DOM layer
+
+`content.js` is the one file `npm test` can't reach — it needs a real DOM and a
+real `chrome.*`, which `node --test`'s pure-module world doesn't provide. It
+gets its own suite instead:
+
+```
+npm run test:e2e
+```
+
+This drives the actual unpacked extension in a real Chromium
+(`chromium.launchPersistentContext` + `--load-extension`, per
+`test-e2e/extension.mjs`), against a stub App (`test-e2e/stub-server.mjs`)
+bound to `127.0.0.1` — the flush never reaches, and never could corrupt,
+`~/Library/Application Support/WatchLogs/watchlogs.sqlite`. `test-e2e/pages/`
+holds the fixture pages it plays; `test-e2e/fixtures/generate-videos.mjs`
+regenerates the checked-in video fixtures if you ever need to.
+
+It's kept out of `npm test` and `test/`: it downloads a real Chromium on first
+run and takes tens of seconds to run, against the pure suite's sub-second
+budget. `test-e2e/content.spec.js` is what to read for what it actually pins —
+among other things, a player that never advances but has readyState 0 must
+never be reported as playing (the phantom-time bug, fixed in 559c679), and a
+frame with no host must still send a non-empty `service` (the empty-`service`
+bug, fixed the same commit).
+
+The `chrome.*` calls in `background.js` besides the Flush (pairing, crash
+recovery, the tab sweep) still fall to manual QA — loading the unpacked
+extension against a running App, as above.
 
 ## Known limits of this slice
 
