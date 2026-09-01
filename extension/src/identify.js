@@ -12,10 +12,16 @@ const NON_IDENTIFYING_PARAMS = new Set([
   "fbclid", "gclid", "igshid", "spm", "share", "shared", "source",
 ]);
 
-/** The Service of a site with no Adapter: its bare hostname. */
+/**
+ * The Service of a site with no Adapter: its bare hostname. `service` rides
+ * the wire as a required, non-empty field, so a URL that parses but has no
+ * host — `about:blank` (every `match_about_blank` iframe), `about:srcdoc`,
+ * `file:` — falls back to "unknown" exactly like one that fails to parse.
+ */
 export function serviceFor(url) {
   const parsed = parse(url);
-  return parsed ? stripWww(parsed.hostname) : "unknown";
+  const host = parsed ? stripWww(parsed.hostname) : "";
+  return host || "unknown";
 }
 
 /**

@@ -22,6 +22,16 @@ test("the Service of a site with no Adapter is its bare hostname", () => {
   assert.equal(serviceFor("not a url"), "unknown");
 });
 
+// A View's `service` rides the wire as a required, non-empty field
+// (SCHEMA.md); the App's decoder 400s the whole Flush otherwise. A URL that
+// parses but has no host — `about:blank` (every `match_about_blank` iframe),
+// `about:srcdoc`, `file:` — must not slip an empty string past `serviceFor`.
+test("a URL that parses but has no host still reports a Service", () => {
+  assert.equal(serviceFor("about:blank"), "unknown");
+  assert.equal(serviceFor("about:srcdoc"), "unknown");
+  assert.equal(serviceFor("file:///Users/me/clip.html"), "unknown");
+});
+
 test("the id source keeps the params that pick the video and drops the noise", () => {
   const canonical = normalizeUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   for (const noisy of [

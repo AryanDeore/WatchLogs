@@ -45,6 +45,31 @@ export const VIEW_FIELDS = [
 export const MAX_EVENTS_PER_FLUSH = 2000;
 
 /**
+ * The `HTMLMediaElement.readyState` at which the player holds data *beyond* the
+ * current frame — the browser's own answer to "can playback actually continue?".
+ */
+export const HAVE_FUTURE_DATA = 3;
+
+/**
+ * Is this player actually moving, as opposed to merely un-paused?
+ *
+ * `paused` records only that something called `play()`. A player whose network
+ * died mid-buffer — or that never loaded a byte — sits at `paused === false`
+ * indefinitely while `currentTime` never advances, and reporting that as
+ * playback banks Watched time for a video nobody watched. `readyState` is the
+ * browser's own account of whether it has anything left to play, so it is what
+ * decides.
+ *
+ * Pure, and takes the three fields rather than the element, so the reducer's
+ * "no DOM" rule still holds.
+ *
+ * @param {{ paused: boolean, ended: boolean, readyState: number }} media
+ */
+export function isAdvancing({ paused, ended, readyState }) {
+  return !paused && !ended && readyState >= HAVE_FUTURE_DATA;
+}
+
+/**
  * @typedef {{ extInstanceId: string, extVersion: string, browser: string, os: string }} Agent
  */
 

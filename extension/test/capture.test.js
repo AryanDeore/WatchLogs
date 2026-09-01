@@ -4,7 +4,24 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SCHEMA_VERSION, initCapture, apply, buildFlush } from "../src/capture.js";
+import { SCHEMA_VERSION, initCapture, apply, buildFlush, isAdvancing } from "../src/capture.js";
+
+// A player that never loaded a byte reports `paused === false` forever — the
+// user pressed play, the network never answered. Treating that as playback once
+// banked 31 minutes of time for a video that never showed a frame, so the
+// heartbeat asks the browser whether the media can actually continue.
+test("a player that cannot continue is not advancing, however un-paused it looks", () => {
+  const playing = { paused: false, ended: false };
+  assert.equal(isAdvancing({ ...playing, readyState: 4 }), true, "buffered ahead");
+  assert.equal(isAdvancing({ ...playing, readyState: 3 }), true, "has the next frame");
+  assert.equal(isAdvancing({ ...playing, readyState: 2 }), false, "this frame and nothing after it");
+  assert.equal(isAdvancing({ ...playing, readyState: 1 }), false, "metadata only");
+  assert.equal(isAdvancing({ ...playing, readyState: 0 }), false, "nothing loaded at all");
+
+  // The two conditions that already stopped the clock still stop it.
+  assert.equal(isAdvancing({ paused: true, ended: false, readyState: 4 }), false);
+  assert.equal(isAdvancing({ paused: false, ended: true, readyState: 4 }), false);
+});
 
 const T0 = Date.UTC(2026, 7, 29, 18, 0, 0);
 

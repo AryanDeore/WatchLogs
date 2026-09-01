@@ -127,7 +127,7 @@
   // --- The capture context ------------------------------------------------------
 
   function makeHelper({ capture: captureModule, buffer, meta, ids, hello }) {
-    const { apply, initCapture } = captureModule;
+    const { apply, initCapture, isAdvancing } = captureModule;
     const runId = hello.runId;
     const capture = initCapture(Date.now(), { tabId: hello.tabId ?? 0 });
     // A tab opened in the background starts hidden; without this the first
@@ -201,7 +201,7 @@
     // --- The 5-second heartbeat --------------------------------------------------
 
     function ensureTimer() {
-      const playing = [...tracked.keys()].some(isPlaying);
+      const playing = [...tracked.keys()].some((media) => isAdvancing(media));
       if (playing && sampleTimer === null) {
         sampleTimer = setInterval(tick, SAMPLE_MS);
       } else if (!playing && sampleTimer !== null) {
@@ -221,7 +221,7 @@
           at,
           viewId: tracked.get(media)?.viewId,
           pos: media.currentTime,
-          playing: isPlaying(media),
+          playing: isAdvancing(media),
           visible,
         });
       }
@@ -316,10 +316,6 @@
     }
 
     // --- Applying and persisting -----------------------------------------------------
-
-    function isPlaying(media) {
-      return !media.paused && !media.ended;
-    }
 
     function isOpen(viewId) {
       return capture.views[viewId]?.open === true;
