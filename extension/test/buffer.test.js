@@ -5,7 +5,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { initSession, apply, applyAck, buildFlush } from "../src/capture.js";
+import { initCapture, apply, buildFlush } from "../src/capture.js";
 import {
   ackKey,
   eventKey,
@@ -32,7 +32,7 @@ const youtube = {
 
 /** A frame that opened one View, played, and sampled twice. */
 function frame() {
-  const s = initSession(T0, { tabId: 41 });
+  const s = initCapture(T0, { tabId: 41 });
   apply(s, { type: "OPEN", at: T0, viewId: "view-1", view: youtube });
   apply(s, { type: "PLAY", at: T0 + 1000, pos: 0 });
   apply(s, { type: "SAMPLE", at: T0 + 6000, pos: 5, playing: true, visible: true });
@@ -163,10 +163,10 @@ test("Views left open by a previous browser run are the ones to recover", () => 
   assert.deepEqual(staleOpenViewIds(items, RUN), []);
 });
 
-test("recovery round-trips: rehydrate, RESTART, write back, and the Flush says crash-recovered", () => {
+test("recovery round-trips: rehydrate, close, write back, and the Flush says crash-recovered", () => {
   const items = disk(frame());
   const s = rehydrate(items);
-  apply(s, { type: "RESTART", at: T0 + 900000 });
+  apply(s, { type: "END_OPEN_VIEWS", reason: "crash-recovered", at: T0 + 900000 });
   const written = { ...items, ...writesFor(s.views["view-1"], { runId: "run-b", fromSeq: 4 }) };
 
   const body = buildFlush(rehydrate(written), { flushId: "f-3", sentAt: T0 + 900000, agent });
@@ -190,14 +190,15 @@ test("rehydrate ignores a fully Ack'd closed View that is mid-cleanup", () => {
   assert.deepEqual(buildFlush(revived, { flushId: "f-4", sentAt: T0, agent }).views, []);
 });
 
-test("an Ack fold in memory and a prune on disk agree about what is left", () => {
-  const s = frame();
+test("what a prune leaves on disk is exactly what the next Flush re-sends", () => {
+  const items = disk(frame());
   const ack = { views: [{ viewId: "view-1", ackSeq: 3 }] };
-  const remaining = Object.keys(prunePlan(disk(s), ack).remove.reduce(
-    (items, key) => (delete items[key], items),
-    disk(s),
-  )).filter((key) => key.startsWith("wl:evt:"));
+  for (const key of prunePlan(items, ack).remove) delete items[key];
+  items[ackKey("view-1")] = { ackSeq: 3 };
 
-  applyAck(s, ack);
-  assert.deepEqual(remaining, s.views["view-1"].events.map((e) => eventKey("view-1", e.seq)));
+  const body = buildFlush(rehydrate(items), { flushId: "f-5", sentAt: T0, agent });
+  assert.deepEqual(
+    Object.keys(items).filter((key) => key.startsWith("wl:evt:")),
+    body.views[0].events.map((event) => eventKey("view-1", event.seq)),
+  );
 });

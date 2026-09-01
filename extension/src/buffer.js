@@ -1,6 +1,6 @@
-// The on-disk buffer's key schema, and the two pure operations over it:
-// rehydrate a capture session out of a storage snapshot, and turn an Ack into
-// the exact set of keys to drop.
+// The on-disk buffer's key schema, and the two pure operations over it: rebuild
+// a Capture out of a storage snapshot, and turn an Ack into the exact set of
+// keys to drop.
 //
 // The layout exists to make concurrent writers safe. The page helper appends
 // and the background worker prunes, in different processes, with no lock
@@ -11,9 +11,13 @@
 //   wl:evt:<viewId>:<seq>       one Event        — written by the owning frame
 //   wl:ack:<viewId>             the high-water mark — written by the worker
 //
-// The worker only ever *deletes* frame-owned keys, and only for a View that is
-// closed and fully Ack'd — one nobody will write again. An Event is a whole key
-// of its own, so an append landing during a prune can't be clobbered by it.
+// The worker deletes frame-owned keys in two cases, both of them keys the frame
+// is finished with: an Event at or below the Ack'd `seq` (a frame only ever
+// writes a given `seq` once, and only ever counts up), and the header of a View
+// that is closed and fully Ack'd. An Event is a whole key of its own, so an
+// append landing during a prune can't be clobbered by it.
+
+import { VIEW_FIELDS } from "./capture.js";
 
 const VIEW_PREFIX = "wl:view:";
 const EVENT_PREFIX = "wl:evt:";
@@ -22,30 +26,26 @@ const ACK_PREFIX = "wl:ack:";
 /** Wide enough that string order and numeric order are the same order. */
 const SEQ_DIGITS = 9;
 
+/** The key holding one View's header. Written by the frame that owns the View. */
 export function viewKey(viewId) {
   return `${VIEW_PREFIX}${viewId}`;
 }
 
+/** The key holding one Event. Written by the frame, deleted by the worker on the Ack. */
 export function eventKey(viewId, seq) {
   return `${EVENT_PREFIX}${viewId}:${String(seq).padStart(SEQ_DIGITS, "0")}`;
 }
 
+/** The key holding one View's Ack high-water mark. Written by the worker alone. */
 export function ackKey(viewId) {
   return `${ACK_PREFIX}${viewId}`;
 }
-
-/** The wire header fields, copied out of a session View. */
-const HEADER_FIELDS = [
-  "viewId", "service", "contentFormat", "embedded", "videoId", "url", "title",
-  "author", "artworkUrl", "durationSec", "metadataSource", "adapterId", "tabId",
-  "startedAt", "open", "previousViewId",
-];
 
 /**
  * The storage writes that bring one View up to date: its header, plus every
  * Event above what is already on disk.
  *
- * @param {object} view  a session View (see `capture.js`)
+ * @param {object} view  a View out of a Capture (see `capture.js`)
  * @param {{ runId?: string, fromSeq?: number }} [options]
  *   `runId` stamps which browser run owns the View — a View still open under an
  *   older run is one the browser died on. Defaults to the stamp it already has.
@@ -53,7 +53,7 @@ const HEADER_FIELDS = [
  */
 export function writesFor(view, { runId, fromSeq = 0 } = {}) {
   const header = {};
-  for (const field of HEADER_FIELDS) header[field] = view[field];
+  for (const field of VIEW_FIELDS) header[field] = view[field];
   header.runId = runId ?? view._runId ?? null;
   header.lastSeq = view._seq;
   header.lastSample = view._lastSample ?? null;
@@ -66,8 +66,8 @@ export function writesFor(view, { runId, fromSeq = 0 } = {}) {
 }
 
 /**
- * Rebuild a capture session from a `chrome.storage.local` snapshot. Keys that
- * aren't the buffer's (the pairing string, the connection state) are ignored.
+ * Rebuild a Capture from a `chrome.storage.local` snapshot. Keys that aren't the
+ * buffer's (the pairing string, the connection state) are ignored.
  *
  * @param {Record<string, any>} items
  * @param {{ now?: number }} [options]
@@ -89,7 +89,7 @@ export function rehydrate(items, { now = 0 } = {}) {
     }
   }
 
-  const session = {
+  const capture = {
     now,
     tabVisible: true,
     pip: false,
@@ -106,10 +106,11 @@ export function rehydrate(items, { now = 0 } = {}) {
   // felt like, but `startedAt` is on every header.
   headers.sort((a, b) => a.startedAt - b.startedAt || String(a.viewId).localeCompare(b.viewId));
 
+
   for (const header of headers) {
     const events = (eventsByView.get(header.viewId) ?? []).sort((a, b) => a.seq - b.seq);
     const view = {};
-    for (const field of HEADER_FIELDS) view[field] = header[field];
+    for (const field of VIEW_FIELDS) view[field] = header[field];
     view.events = events;
     view._seq = header.lastSeq ?? events.at(-1)?.seq ?? 0;
     view._playing = false;
@@ -119,14 +120,14 @@ export function rehydrate(items, { now = 0 } = {}) {
     view._runId = header.runId ?? null;
 
     const ackSeq = ackByView.get(header.viewId) ?? 0;
-    session.views[header.viewId] = view;
-    session.order.push(header.viewId);
-    session.lastFlushAckSeq[header.viewId] = ackSeq;
-    if (header.lastSample) session.lastSampleSnapshot[header.viewId] = header.lastSample;
-    if (!view.open && ackSeq >= view._seq) session.flushedClosed[header.viewId] = true;
+    capture.views[header.viewId] = view;
+    capture.order.push(header.viewId);
+    capture.lastFlushAckSeq[header.viewId] = ackSeq;
+    if (header.lastSample) capture.lastSampleSnapshot[header.viewId] = header.lastSample;
+    if (!view.open && ackSeq >= view._seq) capture.flushedClosed[header.viewId] = true;
   }
 
-  return session;
+  return capture;
 }
 
 /** The viewIds a previous browser run left open — the crash-recovery candidates. */

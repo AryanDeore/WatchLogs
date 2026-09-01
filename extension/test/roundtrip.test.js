@@ -7,7 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { apply, buildFlush, initSession } from "../src/capture.js";
+import { apply, buildFlush, initCapture } from "../src/capture.js";
 import { prunePlan, rehydrate, staleOpenViewIds, viewKey, writesFor } from "../src/buffer.js";
 
 const T0 = Date.UTC(2026, 7, 29, 18, 0, 0);
@@ -34,7 +34,7 @@ function storage() {
 
 /** A page helper: holds a live session and writes through to the buffer. */
 function pageHelper(disk, runId, { tabId = 41 } = {}) {
-  const session = initSession(T0, { tabId });
+  const session = initCapture(T0, { tabId });
   const persisted = new Map();
   return {
     session,
@@ -210,7 +210,7 @@ test("killing the browser mid-play re-Flushes the View at its last sample", () =
 
   const recovery = rehydrate(items, { now: T0 + 900000 });
   recovery.order = recovery.order.filter((id) => stale.includes(id));
-  apply(recovery, { type: "RESTART" });
+  apply(recovery, { type: "END_OPEN_VIEWS", reason: "crash-recovered" });
   const writes = {};
   for (const viewId of recovery.order) {
     Object.assign(writes, writesFor(recovery.views[viewId], { fromSeq: items[viewKey(viewId)].lastSeq }));

@@ -43,8 +43,9 @@ wl:ack:<viewId>           the highest seq the App has taken         (written by 
 
 An Event is a whole key of its own, so the worker's prune (`storage.local.remove`
 of the keys at or below `ackSeq`) can't swallow an append that landed during the
-POST. The worker only ever deletes frame-owned keys for a View that is closed and
-fully Ack'd — one nobody will write to again.
+POST — a frame writes each `seq` once and only counts up, so an Ack'd key is one
+nobody will write again. The View header is frame-owned and the worker deletes it
+in one case only: a View that is closed and fully Ack'd (ADR 0005).
 
 ## Crash recovery
 
@@ -63,7 +64,7 @@ one.
 |---|---|
 | `manifest.json` | MV3; `storage` + `alarms`, `http://127.0.0.1/*` host permission (the CORS exemption), content script in all frames |
 | `content.js` | page helper: media events → raw Events, the 5s timer, write-through to the buffer |
-| `background.js` | worker: `POST /v1/flush`, Ack → prune, 30s sweep, crash recovery, pairing |
+| `background.js` | worker: `POST /v1/flush`, Ack → prune, 30s sweep, crash + closed-tab recovery, pairing |
 | `src/capture.js` | pure: `initSession` / `apply` / `buildFlush` — the capture seam, lifted from `prototypes/message-schema/` |
 | `src/buffer.js` | pure: the key schema above, rehydrate, prune plan |
 | `src/identify.js` | pure: Service, video id source, `embedded`, `contentFormat`, `mediaSession` metadata |
@@ -102,6 +103,9 @@ above).
   Adapters (a later slice) are what tell a real video from page furniture.
 - **Metadata is `mediaSession` and best-effort only.** The Service is the bare
   hostname and the video id is `sha1:` of the normalised URL.
-- **`tab-closed` is reported as `nav`.** A frame can't tell the two apart on the
-  way out; the App treats both as "the View ended here".
+- **A frame reports its own teardown as `nav`.** It can't tell a navigation from
+  a closing tab on the way out. When the tab really is gone the frame usually
+  dies before its write lands, and the worker's sweep reconciles the buffer
+  against the live tabs and closes the View `tab-closed` at its last `sample`
+  instead — so the reason is right within 30 s either way.
 - **Firefox is slice 8.** This is `chrome.*` and an MV3 service worker.

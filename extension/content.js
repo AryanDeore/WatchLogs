@@ -13,23 +13,38 @@
 // This script lands in every frame of every page, including the dozens of tiny
 // ad frames that will never hold a player, so it starts as nothing but a
 // handful of listeners. The modules, the handshake with the worker and the
-// session are all built on the first media event the frame actually sees.
+// Capture are all built on the first media event the frame actually sees.
 
 (() => {
   const SAMPLE_MS = 5000;
 
-  /** Media events don't bubble, so these are capture-phase listeners on the root. */
-  const MEDIA_EVENTS = [
-    "loadedmetadata", "durationchange", "play", "playing", "pause", "ended",
-    "ratechange", "seeked", "enterpictureinpicture", "leavepictureinpicture",
-  ];
+  /**
+   * Media event -> what it means, in one table so the two can't drift apart.
+   * `action` is null where the event only means "re-read the element".
+   * `flush` marks the ones worth waking the worker for straight away, rather
+   * than waiting for the next 5-second beat.
+   */
+  const MEDIA_EVENTS = {
+    loadedmetadata: {},
+    durationchange: {},
+    play: { action: () => ({ type: "PLAY" }) },
+    playing: { action: () => ({ type: "PLAY" }) },
+    pause: { action: () => ({ type: "PAUSE" }), flush: true },
+    ended: { action: () => ({ type: "MEDIA_ENDED" }), flush: true },
+    ratechange: { action: (fact) => ({ type: "RATE", rate: fact.rate }) },
+    seeked: { action: (fact, entry) => ({ type: "SEEKED", from: entry.pos, to: fact.pos }) },
+    enterpictureinpicture: { action: () => ({ type: "PIP_ENTER" }) },
+    leavepictureinpicture: { action: () => ({ type: "PIP_LEAVE" }) },
+  };
 
   /** The running capture context, once a player has shown up. */
   let helper = null;
   let booting = null;
   const queued = [];
 
-  for (const type of MEDIA_EVENTS) {
+  // Media events don't bubble, so each one is a capture-phase listener on the
+  // root: one registration catches players that don't exist yet.
+  for (const type of Object.keys(MEDIA_EVENTS)) {
     document.addEventListener(
       type,
       (event) => {
@@ -81,7 +96,7 @@
 
   async function start() {
     const load = (path) => import(chrome.runtime.getURL(path));
-    const [capture, buffer, meta, ids] = await Promise.all([
+    const [captureModule, bufferModule, metaModule, idsModule] = await Promise.all([
       load("src/capture.js"),
       load("src/buffer.js"),
       load("src/identify.js"),
@@ -94,7 +109,13 @@
     const hello = await ask({ type: "hello" });
     if (!hello) throw new Error("the WatchLogs worker did not answer");
 
-    helper = makeHelper({ capture, buffer, meta, ids, hello });
+    helper = makeHelper({
+      capture: captureModule,
+      buffer: bufferModule,
+      meta: metaModule,
+      ids: idsModule,
+      hello,
+    });
     for (const fact of queued.splice(0)) helper.handle(fact);
     return helper;
   }
@@ -105,13 +126,13 @@
 
   // --- The capture context ------------------------------------------------------
 
-  function makeHelper({ capture, buffer, meta, ids, hello }) {
-    const { apply, initSession } = capture;
+  function makeHelper({ capture: captureModule, buffer, meta, ids, hello }) {
+    const { apply, initCapture } = captureModule;
     const runId = hello.runId;
-    const session = initSession(Date.now(), { tabId: hello.tabId ?? 0 });
+    const capture = initCapture(Date.now(), { tabId: hello.tabId ?? 0 });
     // A tab opened in the background starts hidden; without this the first
     // `visible` would look like a transition that never happened.
-    session.tabVisible = document.visibilityState === "visible";
+    capture.tabVisible = document.visibilityState === "visible";
 
     /** media element -> { viewId, idSource, pos } */
     const tracked = new Map();
@@ -129,34 +150,9 @@
       const entry = ensureView(fact.media, fact);
       if (!entry) return;
 
-      switch (fact.kind) {
-        case "loadedmetadata":
-        case "durationchange":
-          refresh(fact.media, fact);
-          break;
-        case "play":
-        case "playing":
-          act(fact, { type: "PLAY" });
-          break;
-        case "pause":
-          act(fact, { type: "PAUSE" }, true);
-          break;
-        case "ended":
-          act(fact, { type: "MEDIA_ENDED" }, true);
-          break;
-        case "ratechange":
-          act(fact, { type: "RATE", rate: fact.rate });
-          break;
-        case "seeked":
-          act(fact, { type: "SEEKED", from: entry.pos, to: fact.pos });
-          break;
-        case "enterpictureinpicture":
-          act(fact, { type: "PIP_ENTER" });
-          break;
-        case "leavepictureinpicture":
-          act(fact, { type: "PIP_LEAVE" });
-          break;
-      }
+      const meaning = MEDIA_EVENTS[fact.kind];
+      if (meaning.action) act(fact, meaning.action(fact, entry), meaning.flush);
+      else refresh(fact.media, fact);
       persistAll();
       ensureTimer();
     }
@@ -167,12 +163,20 @@
     }
 
     function setVisible(visible) {
-      apply(session, {
+      const viewId = anyOpenViewId();
+      apply(capture, {
         type: visible ? "SHOW" : "HIDE",
         at: Date.now(),
-        viewId: anyOpenViewId(),
+        viewId,
+        pos: positionOf(viewId),
       });
       persistAll(true);
+    }
+
+    /** The last position we saw for a View, if we are still tracking its player. */
+    function positionOf(viewId) {
+      for (const entry of tracked.values()) if (entry.viewId === viewId) return entry.pos;
+      return undefined;
     }
 
     /**
@@ -183,7 +187,7 @@
     function endAll(reason) {
       for (const [media, entry] of tracked) {
         if (!isOpen(entry.viewId)) continue;
-        apply(session, {
+        apply(capture, {
           type: "VIEW_ENDED",
           at: Date.now(),
           viewId: entry.viewId,
@@ -212,7 +216,7 @@
       for (const [media, entry] of [...tracked]) {
         if (!isOpen(entry.viewId)) continue;
         refresh(media, { at, pos: media.currentTime });
-        apply(session, {
+        apply(capture, {
           type: "SAMPLE",
           at,
           viewId: tracked.get(media)?.viewId,
@@ -234,7 +238,7 @@
 
       const header = describe(media);
       const viewId = ids.uuidv4();
-      apply(session, { type: "OPEN", at: fact.at, viewId, view: header });
+      apply(capture, { type: "OPEN", at: fact.at, viewId, view: header });
       const entry = { viewId, idSource: header.videoIdSource, pos: fact.pos || 0 };
       tracked.set(media, entry);
       readMetadata(media, fact.at);
@@ -249,7 +253,7 @@
 
       if (header.videoIdSource !== entry.idSource) {
         const viewId = ids.uuidv4();
-        apply(session, {
+        apply(capture, {
           type: "CHANGE_VIDEO",
           at: fact.at,
           pos: entry.pos,
@@ -295,7 +299,7 @@
     function readMetadata(media, at) {
       const entry = tracked.get(media);
       if (!entry || !isOpen(entry.viewId)) return;
-      const view = session.views[entry.viewId];
+      const view = capture.views[entry.viewId];
 
       const fromSession = meta.fromMediaSession(navigator.mediaSession?.metadata);
       const changed = meta.metadataDiff(view, {
@@ -308,7 +312,7 @@
       const source = Object.keys(fromSession).some((field) => field in changed)
         ? "mediaSession"
         : view.metadataSource;
-      apply(session, { type: "META", at, viewId: entry.viewId, changed, metadataSource: source });
+      apply(capture, { type: "META", at, viewId: entry.viewId, changed, metadataSource: source });
     }
 
     // --- Applying and persisting -----------------------------------------------------
@@ -318,17 +322,17 @@
     }
 
     function isOpen(viewId) {
-      return session.views[viewId]?.open === true;
+      return capture.views[viewId]?.open === true;
     }
 
     function anyOpenViewId() {
-      return session.order.find((id) => session.views[id].open);
+      return capture.order.find((id) => capture.views[id].open);
     }
 
     function act(fact, action, flush = false) {
       const entry = tracked.get(fact.media);
       if (!entry) return;
-      apply(session, { ...action, at: fact.at, viewId: entry.viewId, pos: fact.pos });
+      apply(capture, { ...action, at: fact.at, viewId: entry.viewId, pos: fact.pos });
       entry.pos = fact.pos;
       if (flush) persistAll(true);
     }
@@ -339,8 +343,8 @@
      */
     function persistAll(flush = false) {
       let writes = null;
-      for (const viewId of [...session.order]) {
-        const view = session.views[viewId];
+      for (const viewId of [...capture.order]) {
+        const view = capture.views[viewId];
         if (persisted.get(viewId) === view._seq) continue;
         writes = Object.assign(
           writes ?? {},
@@ -365,11 +369,11 @@
         if (entry.viewId === viewId) tracked.delete(media);
       }
       persisted.delete(viewId);
-      delete session.views[viewId];
-      delete session.lastFlushAckSeq[viewId];
-      delete session.lastSampleSnapshot[viewId];
-      session.order = session.order.filter((id) => id !== viewId);
-      if (session.activeViewId === viewId) session.activeViewId = null;
+      delete capture.views[viewId];
+      delete capture.lastFlushAckSeq[viewId];
+      delete capture.lastSampleSnapshot[viewId];
+      capture.order = capture.order.filter((id) => id !== viewId);
+      if (capture.activeViewId === viewId) capture.activeViewId = null;
     }
 
     function stopOnTeardown() {

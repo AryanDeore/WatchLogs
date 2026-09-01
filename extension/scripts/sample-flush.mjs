@@ -11,7 +11,7 @@
 //
 // `test/fixture.test.js` fails if the committed file and this script disagree.
 
-import { apply, buildFlush, initSession } from "../src/capture.js";
+import { apply, buildFlush, initCapture } from "../src/capture.js";
 import { identify } from "../src/identify.js";
 import { sha1Hex } from "../src/ids.js";
 
@@ -27,7 +27,7 @@ const page = identify({
   duration: 213,
 });
 
-const session = initSession(T0, { tabId: 41 });
+const session = initCapture(T0, { tabId: 41 });
 apply(session, {
   type: "OPEN",
   at: T0,

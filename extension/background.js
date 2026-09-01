@@ -29,16 +29,16 @@ const SWEEP_MINUTES = 0.5;
 
 chrome.runtime.onInstalled.addListener(() => {
   ensureSweep();
-  void flushNow();
+  void flushNow({ reconcile: true });
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureSweep();
-  void flushNow();
+  void flushNow({ reconcile: true });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === SWEEP_ALARM) void flushNow();
+  if (alarm.name === SWEEP_ALARM) void flushNow({ reconcile: true });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -100,15 +100,43 @@ async function recoverOpenViews(runId) {
   const stale = staleOpenViewIds(items, runId);
   if (stale.length === 0) return;
 
-  const session = rehydrate(items, { now: Date.now() });
-  session.order = session.order.filter((viewId) => stale.includes(viewId));
-  apply(session, { type: "RESTART" });
+  await closeOpenViews(items, stale, "crash-recovered");
+}
+
+/**
+ * Close Views whose tab is gone. A frame gets one last chance to write its own
+ * `viewEnded` on `pagehide`, but a closing tab often dies before that write
+ * lands — and a View left open would otherwise sit in the buffer until the next
+ * browser run reported it as `crash-recovered`. Reconciling against the live
+ * tabs on every sweep is what makes `tab-closed` a reason the App ever sees.
+ */
+async function recoverClosedTabs(items) {
+  const openViews = Object.entries(items)
+    .filter(([key, header]) => key.startsWith("wl:view:") && header?.open && header?.tabId > 0);
+  if (openViews.length === 0) return;
+
+  const live = new Set((await chrome.tabs.query({})).map((tab) => tab.id));
+  const orphaned = openViews
+    .filter(([, header]) => !live.has(header.tabId))
+    .map(([, header]) => header.viewId);
+  if (orphaned.length === 0) return;
+
+  // Stamped at the last `sample` for the same reason a crash is: nothing
+  // observed the moment the tab went away.
+  await closeOpenViews(items, orphaned, "tab-closed");
+}
+
+/** Close `viewIds` at their last `sample` and write back only what that added. */
+async function closeOpenViews(items, viewIds, reason) {
+  const capture = rehydrate(items, { now: Date.now() });
+  capture.order = capture.order.filter((viewId) => viewIds.includes(viewId));
+  apply(capture, { type: "END_OPEN_VIEWS", reason });
 
   const writes = {};
-  for (const viewId of session.order) {
+  for (const viewId of capture.order) {
     Object.assign(
       writes,
-      writesFor(session.views[viewId], { fromSeq: items[viewKey(viewId)].lastSeq }),
+      writesFor(capture.views[viewId], { fromSeq: items[viewKey(viewId)].lastSeq }),
     );
   }
   await chrome.storage.local.set(writes);
@@ -119,7 +147,12 @@ async function recoverOpenViews(runId) {
 /** One request in flight at a time (ADR 0002). */
 let inFlight = false;
 
-async function flushNow() {
+/**
+ * @param {{ reconcile?: boolean }} [options]
+ *   `reconcile` also checks the buffer against the browser's live tabs. That is
+ *   the sweep's job, not something to redo on every 5-second Flush.
+ */
+async function flushNow({ reconcile = false } = {}) {
   if (inFlight) return;
   inFlight = true;
   try {
@@ -135,12 +168,13 @@ async function flushNow() {
       return;
     }
 
+    if (reconcile) await recoverClosedTabs(await chrome.storage.local.get(null));
     const items = await chrome.storage.local.get(null);
-    const session = rehydrate(items, { now: Date.now() });
+    const capture = rehydrate(items, { now: Date.now() });
     // A resend after a lost Ack reuses the flushId, so the App replays its
     // original Ack instead of storing the batch twice.
     const flushId = items[PENDING_FLUSH_KEY] ?? uuidv4();
-    const body = buildFlush(session, { flushId, sentAt: Date.now(), agent: await agentInfo() });
+    const body = buildFlush(capture, { flushId, sentAt: Date.now(), agent: await agentInfo() });
     if (body.views.length > 0 && items[PENDING_FLUSH_KEY] !== flushId) {
       await chrome.storage.local.set({ [PENDING_FLUSH_KEY]: flushId });
     }

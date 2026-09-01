@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SCHEMA_VERSION, initSession, apply, applyAck, buildFlush } from "../src/capture.js";
+import { SCHEMA_VERSION, initCapture, apply, buildFlush } from "../src/capture.js";
 
 const T0 = Date.UTC(2026, 7, 29, 18, 0, 0);
 
@@ -26,7 +26,7 @@ const youtube = {
 
 /** A session with one open, playing View. */
 function playing({ tabId = 41 } = {}) {
-  const s = initSession(T0, { tabId });
+  const s = initCapture(T0, { tabId });
   apply(s, { type: "OPEN", at: T0, viewId: "view-1", view: youtube });
   apply(s, { type: "PLAY", at: T0 + 1000, pos: 0 });
   return s;
@@ -112,6 +112,18 @@ test("visibility is a document fact — it reaches every open View in the frame"
 
   assert.equal(types(s, "view-1").at(-1), "hidden");
   assert.equal(types(s, "view-2").at(-1), "hidden");
+});
+
+test("hiding with no View open is still remembered, so the next `visible` lands", () => {
+  const s = initCapture(T0, { tabId: 41 });
+  apply(s, { type: "HIDE", at: T0 + 1000 });
+  assert.equal(s.tabVisible, false);
+
+  apply(s, { type: "OPEN", at: T0 + 2000, viewId: "view-1", view: youtube });
+  apply(s, { type: "PLAY", at: T0 + 3000, pos: 0 });
+  apply(s, { type: "SHOW", at: T0 + 4000, pos: 1 });
+
+  assert.deepEqual(types(s, "view-1"), ["mediaFound", "play", "visible"]);
 });
 
 test("a seek records where it came from and where it went", () => {
@@ -221,12 +233,12 @@ test("an ended View ignores later Events", () => {
   assert.equal(types(s, "view-1").at(-1), "viewEnded");
 });
 
-test("RESTART closes an open View as crash-recovered, stamped at the last sample", () => {
+test("END_OPEN_VIEWS closes an open View as crash-recovered, stamped at the last sample", () => {
   const s = playing();
   apply(s, { type: "SAMPLE", at: T0 + 6000, pos: 5, playing: true, visible: true });
   apply(s, { type: "SAMPLE", at: T0 + 11000, pos: 10, playing: true, visible: true });
   // The browser dies here: nothing observes it, so no Event marks it.
-  apply(s, { type: "RESTART", at: T0 + 900000 });
+  apply(s, { type: "END_OPEN_VIEWS", reason: "crash-recovered", at: T0 + 900000 });
 
   const view = s.views["view-1"];
   assert.equal(view.open, false);
@@ -239,9 +251,9 @@ test("RESTART closes an open View as crash-recovered, stamped at the last sample
   });
 });
 
-test("RESTART with no sample yet falls back to the View's own start", () => {
+test("END_OPEN_VIEWS with no sample yet falls back to the View's own start", () => {
   const s = playing();
-  apply(s, { type: "RESTART", at: T0 + 900000 });
+  apply(s, { type: "END_OPEN_VIEWS", reason: "crash-recovered", at: T0 + 900000 });
 
   assert.deepEqual(s.views["view-1"].events.at(-1), {
     seq: 3,
@@ -271,7 +283,7 @@ test("buildFlush produces a schema-v1 envelope carrying the View header", () => 
 });
 
 test("an embedded player rides the wire with embedded = true", () => {
-  const s = initSession(T0, { tabId: 7 });
+  const s = initCapture(T0, { tabId: 7 });
   apply(s, {
     type: "OPEN",
     at: T0,
@@ -283,7 +295,7 @@ test("an embedded player rides the wire with embedded = true", () => {
 });
 
 test("a heartbeat Flush with nothing buffered has empty views", () => {
-  assert.deepEqual(flush(initSession(T0)).views, []);
+  assert.deepEqual(flush(initCapture(T0)).views, []);
 });
 
 test("an Ack prunes every Event with seq <= ackSeq for that View", () => {
@@ -292,21 +304,13 @@ test("an Ack prunes every Event with seq <= ackSeq for that View", () => {
   const first = flush(s, T0 + 6000);
   assert.deepEqual(first.views[0].events.map((e) => e.seq), [1, 2, 3]);
 
-  applyAck(s, { views: [{ viewId: "view-1", ackSeq: 3 }] });
-  assert.deepEqual(s.views["view-1"].events, []);
+  s.lastFlushAckSeq["view-1"] = 3;
   // Nothing new to say about an open View: it drops out of the next Flush.
   assert.deepEqual(flush(s, T0 + 7000).views, []);
 
   apply(s, { type: "SAMPLE", at: T0 + 11000, pos: 10, playing: true, visible: true });
   const second = flush(s, T0 + 11000);
   assert.deepEqual(second.views[0].events.map((e) => e.seq), [4]);
-});
-
-test("an Ack for a lower seq than the App already has never rewinds", () => {
-  const s = playing();
-  applyAck(s, { views: [{ viewId: "view-1", ackSeq: 2 }] });
-  applyAck(s, { views: [{ viewId: "view-1", ackSeq: 1 }] });
-  assert.equal(s.lastFlushAckSeq["view-1"], 2);
 });
 
 test("an unacknowledged batch is re-sent whole on the next Flush", () => {
@@ -326,8 +330,8 @@ test("a closed View rides one Flush, then stops once it is fully Ack'd", () => {
   assert.equal(body.views[0].open, false);
   assert.deepEqual(body.views[0].events.map((e) => e.seq), [1, 2, 3]);
 
-  applyAck(s, { views: [{ viewId: "view-1", ackSeq: 3 }] });
-  assert.equal(s.flushedClosed["view-1"], true);
+  s.lastFlushAckSeq["view-1"] = 3;
+  s.flushedClosed["view-1"] = true;
   assert.deepEqual(flush(s, T0 + 10000).views, []);
 });
 
@@ -348,6 +352,59 @@ test("Views ride the wire in the order they started", () => {
   apply(s, { type: "PLAY", at: T0 + 19000, pos: 0 });
 
   assert.deepEqual(flush(s, T0 + 19000).views.map((v) => v.viewId), ["view-1", "view-2"]);
+});
+
+test("one Flush is capped, so a long offline stretch still fits in a body", () => {
+  const s = playing();
+  for (let beat = 1; beat <= 20; beat += 1) {
+    apply(s, { type: "SAMPLE", at: T0 + beat * 5000, pos: beat * 5, playing: true, visible: true });
+  }
+
+  const first = buildFlush(s, { flushId: "f-1", sentAt: T0, agent, maxEvents: 8 });
+  assert.deepEqual(first.views[0].events.map((e) => e.seq), [1, 2, 3, 4, 5, 6, 7, 8]);
+
+  s.lastFlushAckSeq["view-1"] = 8;
+  const second = buildFlush(s, { flushId: "f-2", sentAt: T0, agent, maxEvents: 8 });
+  assert.deepEqual(second.views[0].events.map((e) => e.seq), [9, 10, 11, 12, 13, 14, 15, 16]);
+});
+
+test("the cap is spent across Views, oldest first", () => {
+  const s = playing();
+  apply(s, { type: "SAMPLE", at: T0 + 6000, pos: 5, playing: true, visible: true });
+  apply(s, { type: "OPEN", at: T0 + 7000, viewId: "view-2", view: youtube });
+  apply(s, { type: "PLAY", at: T0 + 8000, pos: 0 });
+
+  const body = buildFlush(s, { flushId: "f-1", sentAt: T0, agent, maxEvents: 4 });
+  assert.deepEqual(body.views.map((v) => v.viewId), ["view-1", "view-2"]);
+  assert.deepEqual(body.views[1].events.map((e) => e.seq), [1]);
+});
+
+test("a truncated batch reports the View as open — it isn't carrying the viewEnded", () => {
+  const s = playing();
+  apply(s, { type: "VIEW_ENDED", at: T0 + 9000, pos: 8, reason: "nav" });
+  assert.equal(s.views["view-1"].open, false);
+
+  const truncated = buildFlush(s, { flushId: "f-1", sentAt: T0, agent, maxEvents: 2 });
+  assert.equal(truncated.views[0].open, true);
+  assert.deepEqual(truncated.views[0].events.map((e) => e.seq), [1, 2]);
+
+  s.lastFlushAckSeq["view-1"] = 2;
+  const rest = buildFlush(s, { flushId: "f-2", sentAt: T0, agent, maxEvents: 2 });
+  assert.equal(rest.views[0].open, false);
+});
+
+test("closing an unobserved View takes the reason it deserves", () => {
+  const s = playing();
+  apply(s, { type: "SAMPLE", at: T0 + 6000, pos: 5, playing: true, visible: true });
+  apply(s, { type: "END_OPEN_VIEWS", reason: "tab-closed", at: T0 + 900000 });
+
+  assert.deepEqual(s.views["view-1"].events.at(-1), {
+    seq: 4,
+    type: "viewEnded",
+    t: T0 + 6000,
+    pos: 5,
+    reason: "tab-closed",
+  });
 });
 
 test("the module never reaches for a DOM or an extension API", async () => {

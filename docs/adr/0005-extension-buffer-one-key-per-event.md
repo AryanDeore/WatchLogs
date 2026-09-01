@@ -2,7 +2,7 @@
 
 The Extension's outbound buffer lives in `chrome.storage.local` and has two writers in two processes: the page helper appends Events as they happen, and the background worker deletes them once the App has Ack'd them. `chrome.storage` has no transaction and no compare-and-swap, so anything read-modify-written by both sides can lose an update — and the update it loses is a captured Event. We decided the buffer stores **one Event per key**, with **exactly one writer per key**: `wl:view:<viewId>` and `wl:evt:<viewId>:<seq>` are written only by the frame that owns the View, `wl:ack:<viewId>` only by the worker. Pruning is then a targeted `remove` of keys, never a rewrite of a shared value.
 
-The worker deletes frame-owned keys in one case only — a View that is closed *and* fully Ack'd, which no frame will write to again.
+The worker deletes frame-owned keys in two cases, both of them keys the frame is finished with. An Event key at or below the Ack'd `seq`: a frame writes a given `seq` exactly once and only ever counts up, so that key is immutable by the time the Ack names it. And a View's header, once the View is closed *and* fully Ack'd — no frame will write to it again.
 
 ## Considered options
 
