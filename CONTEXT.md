@@ -35,6 +35,13 @@ One person's engagement with one identified video, in one browser tab. Identifie
 Service, video id, and tab. Video metadata — title, author, Service, content format —
 attaches to the View. A new video id in the same tab ends the View and starts another.
 
+### Capture
+
+What the Extension is holding on behalf of the App: its open Views, the Events
+recorded against them, and how far the App has acknowledged each one. A Capture
+outlives the page that produced it — it is on disk — which is what lets an
+unclean shutdown be recovered rather than lost.
+
 ### Segment
 
 One continuous span of real time during which a View's Watched conditions held true. A
@@ -89,7 +96,9 @@ back to generic extraction and are flagged in the App as needing an Adapter.
 
 ## Terms this vocabulary avoids
 
-- **Session** — ambiguous (browser session vs viewing session). Use **View**.
+- **Session** — ambiguous (browser session vs viewing session). Use **View** for
+  one person's engagement with one video, and **Capture** for what the Extension
+  is holding.
 - **Calendar day / midnight boundary** — WatchLogs's **Day** is activity-flexed, not a
   fixed clock day; "midnight" never appears in the model.
 - **Domain** — for grouping, use **Service**. "Domain" only describes the fallback case

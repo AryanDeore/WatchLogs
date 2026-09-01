@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>hostless frame</title></head>
+<body>
+<!-- A frame whose URL has no host: an `about:blank` iframe, with a player
+     inserted into it once it's ready. `match_about_blank` + `all_frames` in
+     the manifest is what puts the content script in there too. -->
+<iframe id="f" src="about:blank"></iframe>
+<script>
+  // An about:blank iframe already sitting in the initial HTML has finished
+  // "loading" by the time this script runs — its `load` event fires before
+  // a listener attached here could ever catch it — so inject synchronously.
+  const iframe = document.getElementById("f");
+  const doc = iframe.contentDocument;
+  const video = doc.createElement("video");
+  video.id = "v";
+  video.muted = true;
+  video.playsInline = true;
+  video.src = new URL("/fixtures/short.webm", location.origin).href;
+  doc.body.appendChild(video);
+</script>
+</body>
+</html>

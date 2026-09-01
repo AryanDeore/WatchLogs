@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>player</title></head>
+<body>
+<!-- One player. `?src=` (relative or absolute) sets it; the test drives
+     play()/pause()/rate itself so event timing stays exact. -->
+<video id="v" muted playsinline></video>
+<script>
+  const src = new URLSearchParams(location.search).get("src");
+  if (src) document.getElementById("v").src = src;
+</script>
+</body>
+</html>

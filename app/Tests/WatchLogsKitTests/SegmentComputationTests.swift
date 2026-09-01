@@ -182,6 +182,23 @@ struct SegmentComputationTests {
         #expect(computed[0].posEnd == 10)
     }
 
+    /// The shape a dead network leaves behind: `play` landed, then every
+    /// heartbeat for half an hour reported the media stopped at position 0. The
+    /// Extension used to call that playing (`paused` was false the whole time)
+    /// and it banked 31 minutes of time for a video that never showed a frame.
+    /// Whichever side regresses, the total has to stay at nothing.
+    @Test("a player that never advances banks no time at all")
+    func stalledPlaybackBanksNothing() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        for beat in 1...360 {
+            log.sample(beat * 5_000, playing: false, pos: 0)
+        }
+        log.viewEnded(1_805_000, reason: "nav", pos: 0)
+
+        #expect(segments(log).isEmpty)
+    }
+
     @Test("a missing hidden splits at the last confirming sample and reopens at the revealing one")
     func missingHiddenExcludesTheUncertainGap() {
         var log = EventLogBuilder()

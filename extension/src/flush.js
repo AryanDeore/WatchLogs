@@ -1,27 +1,8 @@
-// Pure Flush helpers. No `chrome.*`, no DOM — imported by both the service
-// worker and the Node test suite.
-
-export const SCHEMA_VERSION = 1;
-
-/**
- * @typedef {{ extInstanceId: string, extVersion: string, browser: string, os: string }} Agent
- */
-
-/**
- * Build a heartbeat Flush envelope: a valid Flush whose `views` array is empty
- * (schema v1, `prototypes/message-schema/SCHEMA.md`).
- *
- * @param {{ flushId: string, sentAt: number, agent: Agent }} params
- */
-export function buildHeartbeat({ flushId, sentAt, agent }) {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    flushId,
-    sentAt,
-    agent,
-    views: [],
-  };
-}
+// What to do with the App's answer to a Flush. Pure — no `chrome.*`, no DOM —
+// imported by both the service worker and the Node test suite.
+//
+// Building the body lives in `capture.js`: a heartbeat is just a Flush whose
+// `views` came out empty, so there is nothing separate to build.
 
 /**
  * Is `ack` a well-formed Ack `{flushId, accepted:true, views:[], serverTime}`

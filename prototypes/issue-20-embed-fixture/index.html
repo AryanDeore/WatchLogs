@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WatchLogs manual QA — embedded player fixture</title>
+</head>
+<body>
+<h1>WatchLogs manual QA: embedded player (issue #20, criterion #6)</h1>
+<p>
+  This page is served on host <code>localhost</code>; the iframe below points at
+  host <code>127.0.0.1</code> on the same port — a different hostname, so the
+  content script should read <code>isTopFrame = false</code> inside that frame
+  and <code>embedded = true</code> on the resulting View. The video inside it is
+  a plain MDN sample <code>.mp4</code>, so there's no third-party "embedding
+  disabled" flag to trip.
+</p>
+<iframe
+  width="520"
+  height="360"
+  src="http://127.0.0.1:8000/video.html"
+  title="embed test"
+></iframe>
+</body>
+</html>

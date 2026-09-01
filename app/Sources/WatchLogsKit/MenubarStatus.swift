@@ -13,9 +13,12 @@ public enum MenubarStatus: Equatable, Sendable {
     /// Flushes were arriving but have now gone quiet.
     case disconnected(secondsSinceLastFlush: Int)
 
-    /// Default: a Flush older than this means the Extension has gone quiet. The
-    /// Extension flushes every ~5s, so 15s is three missed beats.
-    public static let defaultStaleAfter: TimeInterval = 15
+    /// Default: a Flush older than this means the Extension has gone quiet.
+    ///
+    /// The Extension Flushes every 5s while a View is playing, and otherwise only
+    /// on its 30s buffer sweep — so an idle browser is silent for 30s at a time
+    /// and 45s is one and a half missed sweeps, not a fault.
+    public static let defaultStaleAfter: TimeInterval = 45
 
     public static func evaluate(
         lastFlushAt: Date?,
