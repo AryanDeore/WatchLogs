@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "flushId": "f1e2d3c4-5b6a-4c7d-8e9f-0a1b2c3d4e5f",
+  "sentAt": 1788026431000,
+  "agent": {
+    "extInstanceId": "ext-inst-7f3a9c21",
+    "extVersion": "0.1.0",
+    "browser": "chrome",
+    "os": "macOS"
+  },
+  "views": [
+    {
+      "viewId": "9f2a1c04-11d2-4a55-9b3e-6c1f0e8a7d40",
+      "service": "youtube.com",
+      "contentFormat": "standard",
+      "embedded": false,
+      "videoId": "sha1:18f573842c0baad9d4c4d4712ff5dcd9016760e5",
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "title": "Never Gonna Give You Up",
+      "author": "Rick Astley",
+      "artworkUrl": null,
+      "durationSec": 213,
+      "metadataSource": "mediaSession",
+      "adapterId": null,
+      "tabId": 41,
+      "startedAt": 1788026400000,
+      "open": false,
+      "previousViewId": null,
+      "events": [
+        {
+          "seq": 1,
+          "type": "mediaFound",
+          "t": 1788026400000,
+          "pos": 0
+        },
+        {
+          "seq": 2,
+          "type": "metadataChange",
+          "t": 1788026400500,
+          "pos": 0,
+          "changed": {
+            "title": "Never Gonna Give You Up",
+            "author": "Rick Astley",
+            "durationSec": 213
+          }
+        },
+        {
+          "seq": 3,
+          "type": "play",
+          "t": 1788026401000,
+          "pos": 0
+        },
+        {
+          "seq": 4,
+          "type": "sample",
+          "t": 1788026406000,
+          "pos": 5,
+          "playing": true,
+          "visible": true
+        },
+        {
+          "seq": 5,
+          "type": "sample",
+          "t": 1788026411000,
+          "pos": 10,
+          "playing": true,
+          "visible": true
+        },
+        {
+          "seq": 6,
+          "type": "sample",
+          "t": 1788026416000,
+          "pos": 15,
+          "playing": true,
+          "visible": true
+        },
+        {
+          "seq": 7,
+          "type": "sample",
+          "t": 1788026421000,
+          "pos": 20,
+          "playing": true,
+          "visible": true
+        },
+        {
+          "seq": 8,
+          "type": "hidden",
+          "t": 1788026422000,
+          "pos": 21
+        },
+        {
+          "seq": 9,
+          "type": "sample",
+          "t": 1788026426000,
+          "pos": 25,
+          "playing": true,
+          "visible": false
+        },
+        {
+          "seq": 10,
+          "type": "sample",
+          "t": 1788026431000,
+          "pos": 30,
+          "playing": true,
+          "visible": false
+        },
+        {
+          "seq": 11,
+          "type": "viewEnded",
+          "t": 1788026431000,
+          "pos": 30,
+          "reason": "nav"
+        }
+      ]
+    }
+  ]
+}

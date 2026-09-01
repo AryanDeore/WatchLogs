@@ -45,6 +45,12 @@ struct MenubarStatusTests {
         #expect(status == .connected(secondsSinceLastFlush: 15))
     }
 
+    @Test("an idle browser's 30s sweep gap still reads as connected")
+    func idleSweepGap() {
+        let status = MenubarStatus.evaluate(lastFlushAt: epoch, now: epoch.addingTimeInterval(31))
+        #expect(status == .connected(secondsSinceLastFlush: 31))
+    }
+
     @Test("a last-flush timestamp in the future clamps to zero")
     func futureClamps() {
         let status = MenubarStatus.evaluate(

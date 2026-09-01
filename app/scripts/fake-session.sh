@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Dev helper: hand-drive one View so the menubar's "Watched today" number moves.
-# Stands in for the extension's capture side, which lands in a later slice.
+# Stands in for the extension's capture side when you'd rather not load Chrome.
 #
 # Posts a real Flush every 5s for one View — mediaFound, play, a `sample`
 # heartbeat per tick, then `viewEnded` — exactly the cadence the extension will

@@ -1,34 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  SCHEMA_VERSION,
-  buildHeartbeat,
-  interpretFlushResponse,
-  isWellFormedAck,
-} from "../src/flush.js";
+import { interpretFlushResponse, isWellFormedAck } from "../src/flush.js";
 import { INITIAL_STATE, reduce, summarize } from "../src/state.js";
-
-const agent = {
-  extInstanceId: "ext-1",
-  extVersion: "0.1.0",
-  browser: "chrome",
-  os: "macOS",
-};
 
 const ackFor = (flushId) => ({
   flushId,
   accepted: true,
   views: [],
   serverTime: 1700000000004,
-});
-
-test("buildHeartbeat produces a schema-v1 envelope with empty views", () => {
-  const body = buildHeartbeat({ flushId: "f-1", sentAt: 1700000000000, agent });
-  assert.equal(body.schemaVersion, SCHEMA_VERSION);
-  assert.equal(body.flushId, "f-1");
-  assert.equal(body.sentAt, 1700000000000);
-  assert.deepEqual(body.agent, agent);
-  assert.deepEqual(body.views, []);
 });
 
 test("isWellFormedAck checks flushId, accepted, views, serverTime", () => {

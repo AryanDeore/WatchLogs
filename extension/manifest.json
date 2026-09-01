@@ -1,14 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "WatchLogs (loopback handshake)",
+  "name": "WatchLogs",
   "version": "0.1.0",
-  "description": "Tracer-bullet extension for issue #26 — pairs with the WatchLogs App and posts a heartbeat Flush.",
+  "description": "Captures video playback as raw Events and Flushes them to the WatchLogs menubar app over loopback.",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start",
+      "js": ["content.js"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/*.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "options_ui": {
     "page": "options.html",
     "open_in_tab": false
