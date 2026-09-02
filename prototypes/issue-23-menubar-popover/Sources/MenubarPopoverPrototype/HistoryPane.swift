@@ -8,132 +8,174 @@ struct HistoryPane: View {
         if store.range == .today {
             return MockData.history.filter { $0.id == "today" }
         }
-        return MockData.history.filter { range.contains($0.dayOfMonth) }
+        return MockData.history.filter { range.contains($0.date) }
     }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
-            Text("Bar under each video = how much of it you've watched.")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.inkFaint)
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-
-            ForEach(days) { day in
-                dayGroup(day)
+        VStack(alignment: .leading, spacing: 0) {
+            // On Today the day header would only restate the range picker, so
+            // the views are listed flat with nothing to expand.
+            if store.range == .today {
+                if let day = days.first {
+                    ViewList(views: day.views, barHeight: BarMetrics.history)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                }
+            } else {
+                ForEach(days) { day in
+                    HistoryDayRow(
+                        day: day,
+                        defaultExpanded: day.id != "d-mon",
+                        barHeight: BarMetrics.history
+                    )
+                    Divider().padding(.horizontal, 14)
+                }
             }
         }
+        .padding(.vertical, 4)
+    }
+}
+
+// Hand-rolled instead of DisclosureGroup: DisclosureGroup only hit-tests its
+// triangle, and the whole header row — day name through duration — should
+// toggle.
+private struct HistoryDayRow: View {
+    let day: MockHistoryDay
+    let barHeight: CGFloat
+    @State private var isExpanded: Bool
+
+    init(day: MockHistoryDay, defaultExpanded: Bool, barHeight: CGFloat) {
+        self.day = day
+        self.barHeight = barHeight
+        self._isExpanded = State(initialValue: defaultExpanded)
     }
 
-    @ViewBuilder
-    private func dayGroup(_ day: MockHistoryDay) -> some View {
-        let collapsed = store.collapsedDays.contains(day.id)
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                store.toggleDay(day.id)
+                withAnimation(.easeOut(duration: 0.15)) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.inkFaint)
-                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 10)
+
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 5) {
-                            Text(day.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
-                            if let date = day.date {
-                                Text(date).foregroundStyle(Theme.inkFaint).font(.system(size: 11.5))
+                            Text(day.name).font(.callout.weight(.semibold))
+                            if let dateLabel = day.dateLabel {
+                                Text(dateLabel).font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        Text(day.span)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(Theme.inkFaint)
+                        Text(day.span).font(.caption2).foregroundStyle(.tertiary)
                     }
-                    Spacer()
-                    Text(MockData.formatMinutes(MockData.dayTotal(day.dayOfMonth)))
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(Theme.inkDim)
+
+                    Spacer(minLength: 8)
+
+                    Text(MockData.formatMinutes(MockData.dayTotal(day.date)))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            if !collapsed {
-                VStack(spacing: 0) {
-                    ForEach(day.views) { view in
-                        viewRow(view)
-                    }
-                }
-                .padding(.vertical, 2)
+            if isExpanded {
+                ViewList(views: day.views, barHeight: barHeight)
+                    .padding(.top, 8)
+                    .padding(.leading, 16)
             }
         }
-        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
+}
 
-    private func viewRow(_ view: MockView) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .top, spacing: 9) {
-                Circle()
-                    .fill(view.service.color)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 5)
+// Explicit .leading alignment: rows whose length is unknown (live) have no
+// full-width progress track to stretch them, so a default-centered VStack
+// indented them past the rows that did have one.
+private struct ViewList: View {
+    let views: [MockView]
+    let barHeight: CGFloat
+
+    var body: some View {
+        // 13.2pt rather than the original 10pt: the thin bar below frees up
+        // less row height than the old ProgressView did, and without this
+        // the rows just sit tighter together — see prototype v6's variant E.
+        // Held constant across bar heights, since 2pt vs 3pt is a 1pt swing
+        // per row and re-tuning the gap alongside it would read as drift.
+        VStack(alignment: .leading, spacing: 13.2) {
+            ForEach(views) { view in
+                ViewRow(view: view, barHeight: barHeight)
+            }
+        }
+    }
+}
+
+private struct ViewRow: View {
+    let view: MockView
+    let barHeight: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                ServiceLogo(service: view.service, size: 14)
+                    .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(view.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.ink)
+                        .font(.callout)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Text(view.author)
                         Text("·")
                         Text(view.at)
                         if view.format != "standard" {
-                            tag(view.format, bg: view.format == "live" ? Theme.liveTagBg : Theme.fmtTagBg, fg: view.format == "live" ? view.service.color : Theme.fmtTagFg)
+                            Text(view.format)
+                                .font(.caption2)
+                                .padding(.horizontal, 4)
+                                .background(view.format == "live" ? view.service.color.opacity(0.15) : Color.secondary.opacity(0.12))
+                                .foregroundStyle(view.format == "live" ? view.service.color : .secondary)
+                                .clipShape(Capsule())
                         }
                         if view.embedded {
-                            tag("embedded", bg: Theme.warnSoft, fg: Theme.warn)
+                            Text("embedded")
+                                .font(.caption2)
+                                .padding(.horizontal, 4)
+                                .background(.orange.opacity(0.15))
+                                .foregroundStyle(.orange)
+                                .clipShape(Capsule())
                         }
                     }
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.inkDim)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
+                Spacer(minLength: 8)
+
                 Text(view.watched)
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(Theme.ink)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
 
             if let coverage = view.coverage {
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.panel2)
-                        Capsule().fill(Theme.accent.opacity(0.55))
-                            .frame(width: geo.size.width * coverage)
-                    }
-                }
-                .frame(height: 3)
-                .padding(.leading, 17)
+                DurationBar(fraction: coverage, height: barHeight)
+                    .padding(.leading, 22)
+                    .padding(.top, 2.4) // see ViewList's spacing comment — keeps row rhythm from the old ProgressView
             } else {
-                Text("live · no fixed length")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Theme.inkFaint)
-                    .padding(.leading, 17)
+                Text("Live · no fixed length")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 22)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-    }
-
-    private func tag(_ text: String, bg: Color, fg: Color) -> some View {
-        Text(text)
-            .font(.system(size: 10, design: .monospaced))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(bg)
-            .foregroundStyle(fg)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
+
+// DurationBar and RangePreset.barHeight live in DurationBar.swift — the
+// By Service and Trends panes draw the same bar at the same height.
