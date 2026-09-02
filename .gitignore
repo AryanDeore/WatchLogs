@@ -17,6 +17,8 @@ prototypes/issue-23-menubar-popover-v5/.build/
 prototypes/issue-23-menubar-popover-v5/.swiftpm/
 prototypes/issue-23-menubar-popover-v6/.build/
 prototypes/issue-23-menubar-popover-v6/.swiftpm/
+prototypes/app-logo-concepts/.build/
+prototypes/app-logo-concepts/.swiftpm/
 
 # Node
 extension/node_modules/

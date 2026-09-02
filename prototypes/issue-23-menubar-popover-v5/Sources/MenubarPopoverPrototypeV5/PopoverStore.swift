@@ -10,6 +10,7 @@ final class PopoverStore {
     var customStart: MockDate?
     var customEnd: MockDate?
     var youtubeExpanded = true
+    var otherExpanded = true
     var settingsOpen = false
     var settings = MockSettings()
 

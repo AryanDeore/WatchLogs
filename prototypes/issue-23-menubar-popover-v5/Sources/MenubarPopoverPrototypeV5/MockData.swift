@@ -264,10 +264,9 @@ enum MockData {
 
     // YouTube's contentFormat split, and its embedded sub-line — same fixed
     // shares the other prototypes use.
-    static let youtubeSplit: [(label: String, frac: Double)] = [
-        ("videos", 0.66), ("shorts", 0.28), ("live", 0.06),
+    static let youtubeSplit: [(format: ContentFormat, frac: Double)] = [
+        (.video, 0.66), (.short, 0.28), (.live, 0.06),
     ]
-    static let youtubeEmbeddedFrac = 0.05
 
     static let needsAdapter: [(name: String, share: Double, note: String)] = [
         ("typo.blog", 0.60, "generic extraction · title only, no video id"),

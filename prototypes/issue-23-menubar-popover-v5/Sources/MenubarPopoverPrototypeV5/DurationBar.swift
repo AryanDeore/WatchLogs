@@ -25,13 +25,36 @@ struct DurationBar: View {
     let fraction: Double
     let height: CGFloat
     var tint: Color = .accentColor
+    // Services turns this off: with several of these stacked (a service row
+    // plus its format breakdown), a full-width track behind every one of
+    // them reads as "these are all the same size," which is exactly what
+    // the fraction-of-grand-total change below is trying to correct.
+    var showsTrack: Bool = true
+    // How much narrower this bar's own box is than the pane's shared plot.
+    // A nested row is indented, so its box is short by exactly the indent —
+    // and a fraction of that shorter box would draw a slice visibly smaller
+    // than its true share of the bar it is nested under. Adding the indent
+    // back here measures every bar against one ruler no matter how deeply
+    // its row sits.
+    var narrowerThanPlotBy: CGFloat = 0
+    // A run of solid colour before the measured length starts, drawn back out
+    // of the box's leading edge. It carries no data: it exists so a bar can
+    // *look* like it begins under its own row's first letter while still
+    // being measured from the line every other bar starts on. Services uses
+    // it on the service rows; anything comparing two bars that don't share
+    // the same lead-in is comparing their right edges, not their lengths.
+    var leadIn: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
+            let plot = geo.size.width + narrowerThanPlotBy
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.10))
+                if showsTrack {
+                    Capsule().fill(Color.primary.opacity(0.10))
+                }
                 Capsule().fill(tint)
-                    .frame(width: geo.size.width * max(0, min(1, fraction)))
+                    .frame(width: leadIn + plot * max(0, min(1, fraction)))
+                    .offset(x: -leadIn)
             }
         }
         .frame(height: height)
