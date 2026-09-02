@@ -47,19 +47,23 @@ it only tests whether *native chrome* changes the verdict.
 | Pane switcher | Custom flat tab pills | Icon + label tab row (CodexBar's provider-switcher pattern): SF Symbols, accent-filled selected state |
 | Calendar | Custom grid, hex accent blue, monospace digits | Same custom grid (kept — see below), but `Color.accentColor`/`.primary`/`.secondary`/`.tertiary`, system font |
 | Coverage bar / part-to-whole bars | `GeometryReader` + manual `Capsule` fills | `ProgressView(value:).tint(...)` — native linear progress control |
-| Day / YouTube-split expand-collapse | Custom chevron + manual `collapsedDays` state | `DisclosureGroup` — the native SwiftUI/AppKit disclosure triangle |
+| Day / YouTube-split expand-collapse | Custom chevron + manual `collapsedDays` state | `DisclosureGroup` was tried and pulled back out — see below |
 | Trends, > 14 days | Hand-rolled columns via `GeometryReader` | **Swift Charts** (`Chart`, `BarMark`) — stacking and axis thinning from the framework |
 | Trends, ≤ 14 days | Hand-rolled label \| track \| value rows | **Kept v1's layout** — Swift Charts was tried and pulled back out (see below) |
 | Settings | Custom `.field`/`.set` div-alikes | Native `Form` + `.formStyle(.grouped)` + `LabeledContent`/`Toggle`/`Stepper` — the same layout engine as System Settings panes |
 | Service icons | Coloured mono initials (`Y` / `N` / `T`) | Drawn brand marks (`ServiceLogo.swift`) — YouTube play badge, Netflix N, Twitch glitch |
-| Scrollbar | Stock overlay scroller | Custom ~3.5pt knob (`ThinScrollView.swift`), half the stock width |
+| Scrollbar | Stock overlay scroller | Custom ~2.5pt knob (`ThinScrollView.swift`), roughly a third the stock width |
 | Typography | Fixed px sizes ported from CSS, heavy use of monospaced digits | System text styles (`.headline`, `.callout`, `.caption`) with `.monospacedDigit()` only on numeric readouts |
 
-Three components are **not** fully native, each for a specific reason:
+Four components are **not** fully native, each for a specific reason:
 
 - **Calendar** — `DatePicker` selects a single date and can't render a connected
   range highlight across a week/month grid, which Today/Week/Month/Custom needs.
   Reskinned with system colors/fonts, but structurally still v1's grid.
+- **Expand/collapse rows** — `DisclosureGroup` only hit-tests its triangle, so a
+  header row reading "Thursday Aug 28 … 3h 32m" was only clickable on a 10pt
+  chevron. Replaced with a plain `Button` over the whole row plus
+  `.contentShape(Rectangle())`, keeping the chevron as a rotation affordance.
 - **Trends at ≤ 14 days** — Swift Charts was built here first and removed. At
   popover width its categorical y-axis labels overlapped the bars, the plot border
   and gridlines added clutter a 380pt panel can't afford, and a raw "minutes"
@@ -68,7 +72,10 @@ Three components are **not** fully native, each for a specific reason:
   with native type and colors. Swift Charts still owns the > 14-day case, where
   individual rows stop being readable anyway.
 - **Scrollbar** — AppKit exposes no knob-width setting, so the system indicator is
-  hidden and a thinner one drawn over it.
+  hidden and a thinner one drawn over it. `.scrollIndicators(.hidden)` alone does
+  not do it: the overlay scroller still faded in on hover, so a small
+  `NSViewRepresentable` reaches `enclosingScrollView` and clears
+  `hasVerticalScroller`.
 
 ### On the logos
 
@@ -86,16 +93,27 @@ before this ships.
   dense >14-day view and lost on the ≤14-day one; a 380pt panel doesn't have room
   for a general-purpose chart's axes, gridlines, and border. The hand-rolled rows
   from v1 stayed cleaner. Reach for the framework, but measure at real width.
-- `DisclosureGroup` and `ProgressView` are direct, no-compromise replacements for
-  v1's hand-rolled collapse/expand chevrons and `GeometryReader` fill bars.
+- `ProgressView(value:)` is a direct, no-compromise replacement for v1's
+  `GeometryReader` fill bars. `DisclosureGroup` is not: its label is inert, so any
+  row where the whole strip should be the target has to be a `Button` instead.
 - `Form` + `.formStyle(.grouped)` gets Settings most of the way to looking like a
-  real System Settings pane for free — no custom `.field` layout needed. **But**: a
-  slide-over in a `ZStack` needs an explicit opaque background
-  (`Color(nsColor: .windowBackgroundColor)`) and `maxWidth/maxHeight: .infinity`,
-  or the pane behind shows through and the two sets of text overlap. `Form`
-  supplies no background of its own.
+  real System Settings pane for free — no custom `.field` layout needed. Settings
+  is swapped in for the panes (`if/else` in the `ZStack`) rather than layered over
+  them: layering forces an opaque background of its own, which then visibly fails
+  to match the popover's vibrancy material.
+- A default-alignment `VStack` silently indents its short children. Rows with a
+  full-width `ProgressView` stretched to the panel edge while live rows (no known
+  length, so no bar) centred themselves — reading as if live views were nested one
+  level deeper. `VStack(alignment: .leading)` everywhere, and a `Spacer` before
+  each duration so they share a right edge.
+- Two sibling `ForEach`es in one `LazyVGrid` must not share ids. The month grid's
+  leading blanks used `0..<lead` and its days used `1...dim`; the overlap made the
+  first few days of every month vanish, differently per launch.
 - Stock overlay scrollers are sized for document windows and read as heavy in a
   popover, and AppKit gives no width knob — a custom indicator is the only route.
+  Hiding the stock one is a two-step job: `.scrollIndicators(.hidden)` suppresses
+  it at rest but it still fades in on hover, track and all, so the custom knob
+  ends up sitting on top of a second, wider bar.
 - Same `Color`-vs-`ShapeStyle` friction as v1 (`.tertiary` on a `Color`-typed
   ternary branch needs an explicit `Color(nsColor: .tertiaryLabelColor)`).
 - The pane switcher stayed unsettled through both versions — pulled out into its

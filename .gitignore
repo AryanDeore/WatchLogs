@@ -11,6 +11,10 @@ prototypes/issue-23-menubar-popover-v2/.build/
 prototypes/issue-23-menubar-popover-v2/.swiftpm/
 prototypes/issue-23-menubar-popover-v3/.build/
 prototypes/issue-23-menubar-popover-v3/.swiftpm/
+prototypes/issue-23-menubar-popover-v4/.build/
+prototypes/issue-23-menubar-popover-v4/.swiftpm/
+prototypes/issue-23-menubar-popover-v5/.build/
+prototypes/issue-23-menubar-popover-v5/.swiftpm/
 
 # Node
 extension/node_modules/

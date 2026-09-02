@@ -70,6 +70,15 @@ enum Pane: String, CaseIterable, Identifiable {
         }
     }
 
+    // The rail is only 44pt wide, so "By Service" has to lose a word.
+    var shortLabel: String {
+        switch self {
+        case .history: "History"
+        case .byService: "Services"
+        case .trends: "Trends"
+        }
+    }
+
     var symbol: String {
         switch self {
         case .history: "clock"
