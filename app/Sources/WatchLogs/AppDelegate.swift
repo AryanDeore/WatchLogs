@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Pairing String…", action: #selector(showPairingString), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Regenerate Token", action: #selector(regenerateToken), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Day Boundary…", action: #selector(showDayBoundarySettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Rebuild Statistics", action: #selector(rebuildStatistics), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit WatchLogs", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -151,6 +152,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try transport.setTargetHour(hour)
         } catch {
             presentFatal("Could not save the Day target hour: \(error)")
+        }
+    }
+
+    /// The manual "Rebuild statistics" action (ADR 0004): drops both rollup
+    /// tables and replays them from `segments`, for when the cache is
+    /// suspected stale.
+    @objc private func rebuildStatistics() {
+        do {
+            try transport.rebuildStatistics()
+            rebuildMenu()
+        } catch {
+            presentFatal("Could not rebuild statistics: \(error)")
         }
     }
 

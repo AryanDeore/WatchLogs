@@ -67,3 +67,31 @@ public struct FrozenDay: Equatable, Sendable {
     public var watchedMs: Int
     public var backgroundMs: Int
 }
+
+/// Watched/Background totals for one `service × contentFormat` slice — the
+/// grain `rollup_slice` stores (ADR 0004) and `EventStore.slices(for:)`
+/// returns, one entry per combination present in the requested range.
+public struct TotalsSlice: Equatable, Sendable {
+    public var service: String
+    public var contentFormat: String
+    public var totals: Totals
+
+    public init(service: String, contentFormat: String, totals: Totals) {
+        self.service = service
+        self.contentFormat = contentFormat
+        self.totals = totals
+    }
+}
+
+/// The Adapters WatchLogs ships (`CONTEXT.md` "Adapter"): a per-Service reader
+/// that extracts a video's id and metadata. Any other Service falls back to
+/// generic extraction and is flagged as needing one.
+public enum Adapter {
+    public static let shippedServices: Set<String> = ["youtube", "netflix"]
+
+    /// Computed, not stored (issue #22): a historical View re-flags the day an
+    /// Adapter ships for its Service, since nothing needs migrating.
+    public static func needsAdapter(service: String, adapterId: String?) -> Bool {
+        adapterId == nil && !shippedServices.contains(service)
+    }
+}

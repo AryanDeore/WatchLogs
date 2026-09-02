@@ -400,12 +400,20 @@ enum FlushJSON {
         """#.utf8)
     }
 
-    static func view(id: String, open: Bool, events: [String]) -> String {
-        #"""
-        {"viewId":"\#(id)","service":"youtube","contentFormat":"standard","embedded":false,
+    static func view(
+        id: String,
+        open: Bool,
+        events: [String],
+        service: String = "youtube",
+        contentFormat: String = "standard",
+        adapterId: String? = "youtube"
+    ) -> String {
+        let adapterField = adapterId.map { #""\#($0)""# } ?? "null"
+        return #"""
+        {"viewId":"\#(id)","service":"\#(service)","contentFormat":"\#(contentFormat)","embedded":false,
          "videoId":"dQw4w9WgXcQ","url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ",
          "title":"Never Gonna Give You Up","author":"Rick Astley","durationSec":213,
-         "metadataSource":"adapter","adapterId":"youtube","tabId":41,"startedAt":1788026400000,
+         "metadataSource":"adapter","adapterId":\#(adapterField),"tabId":41,"startedAt":1788026400000,
          "open":\#(open),"previousViewId":null,"events":[\#(events.joined(separator: ","))]}
         """#
     }
