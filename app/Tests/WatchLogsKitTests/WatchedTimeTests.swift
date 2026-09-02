@@ -162,18 +162,21 @@ struct WatchedTimeTests {
 
     @Test("the menubar's Watched today number is totals(today)")
     func watchedTodayMatchesTheReadModel() throws {
-        // Noon today, so the session cannot straddle a midnight boundary in
-        // whatever zone this machine is in.
+        // Noon, so the open Day bootstraps here rather than crossing its own
+        // target hour partway through the test.
         let noon = Calendar.current.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
         let clock = ManualClock(noon)
         let (service, client, store) = try LoopbackServerTests.makeService(clock: clock)
         defer { service.stop() }
 
         _ = try post(FlushJSON.oneMinuteSession(startingAt: noon.epochMillis), to: service, using: client)
+        // The open Day's live window is clipped to "now" (ADR 0001's
+        // `openDayTotals()`), so the clock must reach the session's end.
+        clock.advance(by: 60)
 
         let totals = try service.todayTotals()
         #expect(totals.watchedMs == 60_000)
-        #expect(try store.totals(in: DateRange.day(containing: noon)) == totals)
+        #expect(try store.totals(in: DateRange(startMs: noon.epochMillis, endMs: clock.now().epochMillis)) == totals)
         #expect(WatchedTimeLine.today(totals) == "Watched today · 1m")
     }
 
@@ -186,7 +189,10 @@ struct WatchedTimeTests {
 
         let yesterdayNoon = noon.addingTimeInterval(-86_400)
         _ = try post(FlushJSON.oneMinuteSession(startingAt: yesterdayNoon.epochMillis), to: service, using: client)
+        clock.advance(by: 3600)
 
+        // The open Day bootstrapped at `noon` (this store's first-ever
+        // record), a full day after the posted session.
         #expect(try service.todayTotals().watchedMs == 0)
     }
 

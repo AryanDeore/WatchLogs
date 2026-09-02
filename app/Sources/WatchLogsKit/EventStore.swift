@@ -85,6 +85,7 @@ public final class EventStore: @unchecked Sendable {
                 "INSERT INTO flushes (flush_id, received_at_ms, ack_json) VALUES (?, ?, ?)",
                 [.text(envelope.flushId), .int(serverTime), .text(String(decoding: ack.jsonData(), as: UTF8.self))]
             )
+            try advanceOpenDay(now: Date(epochMillis: serverTime), calendar: .current)
             return ack
         }
     }
@@ -99,7 +100,266 @@ public final class EventStore: @unchecked Sendable {
     public func totals(in range: DateRange) throws -> Totals {
         lock.lock()
         defer { lock.unlock() }
+        return try rawTotals(range: range)
+    }
 
+    // MARK: - The activity-flexed Day (ADR 0001)
+
+    /// Watched and Background totals for `kind`, resolved against the
+    /// activity-flexed Day (ADR 0001) rather than a naive calendar range.
+    ///
+    /// Advances and freezes the open Day as far as `now` allows first, so a
+    /// relaunch into an idle gap confirms the previous Day's boundary before
+    /// this read. A range that includes the open Day sums frozen Days'
+    /// snapshotted totals plus a live `totals(in:)` over `[openDayStart, now)`
+    /// — the only part of the answer that is still provisional.
+    public func totals(for kind: DateRangeKind, now: Date, calendar: Calendar = .current) throws -> Totals {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let openStart = try advanceOpenDay(now: now, calendar: calendar)
+        let resolved = try resolveRange(kind, openStart: openStart, calendar: calendar)
+        var totals = try frozenTotals(startMs: resolved.startMs, endMs: resolved.endMs)
+        if resolved.includesOpenDay {
+            let live = try rawTotals(range: DateRange(startMs: openStart.epochMillis, endMs: now.epochMillis))
+            totals.watchedMs += live.watchedMs
+            totals.backgroundMs += live.backgroundMs
+        }
+        return totals
+    }
+
+    /// The current open Day's start, or `nil` if the Day timeline has not
+    /// bootstrapped yet (no Flush or read has ever landed).
+    public func openDayStart() throws -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return try openDayStartRaw()
+    }
+
+    /// Every frozen Day, oldest first — for inspecting freeze immutability.
+    public func frozenDays() throws -> [FrozenDay] {
+        lock.lock()
+        defer { lock.unlock() }
+        return try loadFrozenDays()
+    }
+
+    /// The Day target hour (local, 0–23; default `04:00`, ADR 0001), a
+    /// Settings control that takes effect for the open Day only.
+    public func targetHour() throws -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return try targetHourRaw()
+    }
+
+    /// `hour` is clamped to `0..<DayBoundary.hardCapHour`: the target hour
+    /// must stay strictly before the fixed cap, or the cap (derived as an
+    /// offset from the target hour) would stop acting as a same-day backstop.
+    public func setTargetHour(_ hour: Int) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        let clamped = min(max(hour, 0), DayBoundary.hardCapHour - 1)
+        try database.run(
+            """
+            INSERT INTO day_settings (id, target_hour) VALUES (1, ?)
+            ON CONFLICT(id) DO UPDATE SET target_hour = excluded.target_hour
+            """,
+            [.int(clamped)]
+        )
+    }
+
+    /// Freeze every Day whose boundary `now` confirms, starting from the
+    /// current open Day, and return the (possibly advanced) open Day's start.
+    /// Bootstraps the very first Day at `now` if the timeline has never
+    /// started. Looping lets a long-closed App relaunch catch up through
+    /// several empty Days in one pass rather than needing a background job.
+    @discardableResult
+    private func advanceOpenDay(now: Date, calendar: Calendar) throws -> Date {
+        var start: Date
+        if let existing = try openDayStartRaw() {
+            start = existing
+        } else {
+            start = now
+            try database.run("INSERT INTO open_day (id, day_start_ms) VALUES (1, ?)", [.int(start.epochMillis)])
+        }
+
+        let targetHour = try targetHourRaw()
+        while let end = DayBoundary.confirmedEnd(
+            dayStart: start,
+            watchedIntervals: try watchedIntervals(since: start.epochMillis),
+            now: now,
+            targetHour: targetHour,
+            calendar: calendar
+        ) {
+            try freeze(dayStart: start, dayEnd: end, calendar: calendar)
+            start = end
+            try database.run("UPDATE open_day SET day_start_ms = ? WHERE id = 1", [.int(start.epochMillis)])
+        }
+        return start
+    }
+
+    /// Snapshot `[dayStart, dayEnd)`'s totals into `days` — never re-evaluated
+    /// once written, which is what keeps a frozen Day's totals stable when a
+    /// later, out-of-order batch lands Events inside it.
+    private func freeze(dayStart: Date, dayEnd: Date, calendar: Calendar) throws {
+        let label = DayBoundary.label(for: dayStart, calendar: calendar)
+        let totals = try rawTotals(range: DateRange(startMs: dayStart.epochMillis, endMs: dayEnd.epochMillis))
+        try database.run(
+            """
+            INSERT INTO days (logical_date, day_start_ms, day_end_ms, watched_ms, background_ms)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(logical_date) DO NOTHING
+            """,
+            [
+                .text(label),
+                .int(dayStart.epochMillis),
+                .int(dayEnd.epochMillis),
+                .int(totals.watchedMs),
+                .int(totals.backgroundMs),
+            ]
+        )
+    }
+
+    /// Resolve `kind` to an absolute `[startMs, endMs)` plus whether it runs
+    /// through the still-live open Day.
+    private func resolveRange(
+        _ kind: DateRangeKind,
+        openStart: Date,
+        calendar: Calendar
+    ) throws -> (startMs: Int, endMs: Int, includesOpenDay: Bool) {
+        let openLabel = DayBoundary.label(for: openStart, calendar: calendar)
+
+        switch kind {
+        case .today:
+            return (openStart.epochMillis, openStart.epochMillis, true)
+
+        case .thisWeek:
+            let monday = mostRecentMonday(onOrBefore: openStart, calendar: calendar)
+            let start = try dayStart(forLabel: DayBoundary.label(for: monday, calendar: calendar), openStart: openStart, openLabel: openLabel)
+            return (start, openStart.epochMillis, true)
+
+        case .thisMonth:
+            let firstOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: openStart))!
+            let start = try dayStart(forLabel: DayBoundary.label(for: firstOfMonth, calendar: calendar), openStart: openStart, openLabel: openLabel)
+            return (start, openStart.epochMillis, true)
+
+        case .custom(let from, let through):
+            let fromLabel = DayBoundary.label(for: from, calendar: calendar)
+            let throughLabel = DayBoundary.label(for: through, calendar: calendar)
+            let start = try dayStart(forLabel: fromLabel, openStart: openStart, openLabel: openLabel)
+            if throughLabel >= openLabel {
+                // The open Day, or a date not reached yet: clip to it.
+                return (start, openStart.epochMillis, true)
+            }
+            let end = try dayEnd(forLabel: throughLabel) ?? openStart.epochMillis
+            return (start, end, false)
+        }
+    }
+
+    /// The most recent Monday on or before `date`'s calendar date (Week =
+    /// Monday–Sunday, ADR 0001), as a Date on that calendar date.
+    private func mostRecentMonday(onOrBefore date: Date, calendar: Calendar) -> Date {
+        let dayOfMonth = calendar.startOfDay(for: date)
+        // Gregorian `.weekday`: Sunday = 1 ... Saturday = 7. Days since the
+        // most recent Monday: Monday(2)→0, Sunday(1)→6.
+        let weekday = calendar.component(.weekday, from: dayOfMonth)
+        let daysSinceMonday = (weekday + 5) % 7
+        return calendar.date(byAdding: .day, value: -daysSinceMonday, to: dayOfMonth) ?? dayOfMonth
+    }
+
+    /// A labelled Day's `day_start_ms` — the open Day's own start if the
+    /// label matches it, else the frozen row, else (the label predates any
+    /// known Day) the earliest Day this store has ever seen.
+    private func dayStart(forLabel label: String, openStart: Date, openLabel: String) throws -> Int {
+        if label == openLabel { return openStart.epochMillis }
+        if let frozen = try frozenDayBoundaryMs(column: "day_start_ms", forLabel: label) { return frozen }
+        return try earliestKnownDayStartMs() ?? openStart.epochMillis
+    }
+
+    private func dayEnd(forLabel label: String) throws -> Int? {
+        try frozenDayBoundaryMs(column: "day_end_ms", forLabel: label)
+    }
+
+    /// `column` is always one of `day_start_ms` / `day_end_ms` — both
+    /// call sites are internal and pass a literal, never user input.
+    private func frozenDayBoundaryMs(column: String, forLabel label: String) throws -> Int? {
+        var result: Int?
+        try database.query("SELECT \(column) FROM days WHERE logical_date = ?", [.text(label)]) { row in
+            result = row.int(0)
+        }
+        return result
+    }
+
+    private func earliestKnownDayStartMs() throws -> Int? {
+        var result: Int?
+        try database.query("SELECT MIN(day_start_ms) FROM days") { row in
+            result = row.optionalInt(0)
+        }
+        return result
+    }
+
+    /// The sum of every frozen Day's snapshotted totals fully contained in
+    /// `[startMs, endMs)` — never the live `segments` table, so a frozen
+    /// Day's contribution cannot change after the fact.
+    private func frozenTotals(startMs: Int, endMs: Int) throws -> Totals {
+        var totals = Totals()
+        try database.query(
+            "SELECT COALESCE(SUM(watched_ms), 0), COALESCE(SUM(background_ms), 0) FROM days WHERE day_start_ms >= ? AND day_end_ms <= ?",
+            [.int(startMs), .int(endMs)]
+        ) { row in
+            totals.watchedMs = row.int(0)
+            totals.backgroundMs = row.int(1)
+        }
+        return totals
+    }
+
+    private func loadFrozenDays() throws -> [FrozenDay] {
+        var days: [FrozenDay] = []
+        try database.query(
+            "SELECT logical_date, day_start_ms, day_end_ms, watched_ms, background_ms FROM days ORDER BY day_start_ms"
+        ) { row in
+            days.append(FrozenDay(
+                label: row.text(0),
+                dayStartMs: row.int(1),
+                dayEndMs: row.int(2),
+                watchedMs: row.int(3),
+                backgroundMs: row.int(4)
+            ))
+        }
+        return days
+    }
+
+    /// The merged watched-time timeline the boundary detector needs: only
+    /// `watched` Segments (ADR 0001 — background audio never holds a Day
+    /// open) ending after `startMs`, across every View.
+    private func watchedIntervals(since startMs: Int) throws -> [DateInterval] {
+        var intervals: [DateInterval] = []
+        try database.query(
+            "SELECT wall_start_ms, wall_end_ms FROM segments WHERE kind = 'watched' AND wall_end_ms > ? ORDER BY wall_start_ms",
+            [.int(startMs)]
+        ) { row in
+            intervals.append(DateInterval(start: Date(epochMillis: row.int(0)), end: Date(epochMillis: row.int(1))))
+        }
+        return intervals
+    }
+
+    private func openDayStartRaw() throws -> Date? {
+        var result: Int?
+        try database.query("SELECT day_start_ms FROM open_day WHERE id = 1") { row in
+            result = row.int(0)
+        }
+        return result.map(Date.init(epochMillis:))
+    }
+
+    private func targetHourRaw() throws -> Int {
+        var hour = DayBoundary.defaultTargetHour
+        try database.query("SELECT target_hour FROM day_settings WHERE id = 1") { row in
+            hour = row.int(0)
+        }
+        return hour
+    }
+
+    /// `totals(in:)` without the lock, for internal callers that already hold it.
+    private func rawTotals(range: DateRange) throws -> Totals {
         var totals = Totals()
         try database.query(
             """
@@ -376,5 +636,24 @@ public final class EventStore: @unchecked Sendable {
         );
         CREATE INDEX IF NOT EXISTS segments_by_view ON segments (view_id);
         CREATE INDEX IF NOT EXISTS segments_by_wall_clock ON segments (wall_start_ms, wall_end_ms);
+
+        CREATE TABLE IF NOT EXISTS days (
+            logical_date  TEXT PRIMARY KEY,
+            day_start_ms  INTEGER NOT NULL,
+            day_end_ms    INTEGER NOT NULL,
+            watched_ms    INTEGER NOT NULL,
+            background_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS days_by_start ON days (day_start_ms);
+
+        CREATE TABLE IF NOT EXISTS open_day (
+            id           INTEGER PRIMARY KEY CHECK (id = 1),
+            day_start_ms INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS day_settings (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            target_hour INTEGER NOT NULL
+        );
         """
 }

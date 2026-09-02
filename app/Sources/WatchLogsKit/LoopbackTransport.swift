@@ -40,10 +40,19 @@ public final class LoopbackTransport: @unchecked Sendable {
         )
     }
 
-    /// Watched and Background time for the naive local calendar day containing
-    /// `now` — the menubar's "Watched today" number.
+    /// Watched and Background time for the current open Day (ADR 0001) — the
+    /// menubar's "Watched today" number.
     public func todayTotals() throws -> Totals {
-        try store.totals(in: DateRange.day(containing: clock.now()))
+        try store.totals(for: .today, now: clock.now())
+    }
+
+    /// The Day target hour shown and edited in Settings (ADR 0001).
+    public func targetHour() throws -> Int {
+        try store.targetHour()
+    }
+
+    public func setTargetHour(_ hour: Int) throws {
+        try store.setTargetHour(hour)
     }
 
     /// Bind the server (rolling the port on collision).

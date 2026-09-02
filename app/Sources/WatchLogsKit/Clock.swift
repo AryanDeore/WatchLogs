@@ -34,4 +34,9 @@ extension Date {
     var epochMillis: Int {
         Int((timeIntervalSince1970 * 1000).rounded())
     }
+
+    /// The inverse of `epochMillis`.
+    init(epochMillis: Int) {
+        self.init(timeIntervalSince1970: Double(epochMillis) / 1000)
+    }
 }
