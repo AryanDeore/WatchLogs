@@ -7,6 +7,8 @@ app/.build/
 app/.swiftpm/
 prototypes/issue-23-menubar-popover/.build/
 prototypes/issue-23-menubar-popover/.swiftpm/
+prototypes/issue-23-menubar-popover-v2/.build/
+prototypes/issue-23-menubar-popover-v2/.swiftpm/
 
 # Node
 extension/node_modules/
