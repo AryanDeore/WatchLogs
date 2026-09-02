@@ -15,7 +15,7 @@ struct PopoverView: View {
                 Divider()
                 TabBar(store: store)
                 Divider()
-                ScrollView {
+                ThinScrollView {
                     paneBody
                 }
             }

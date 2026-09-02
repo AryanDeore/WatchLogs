@@ -76,11 +76,8 @@ private struct ViewRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: view.service.symbol)
-                    .font(.caption)
-                    .foregroundStyle(view.service.color)
-                    .frame(width: 14)
-                    .padding(.top, 2)
+                ServiceLogo(service: view.service, size: 14)
+                    .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(view.title)

@@ -45,11 +45,8 @@ private struct ServiceRow: View {
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Label {
-                    Text(service.name).font(.callout.weight(.medium))
-                } icon: {
-                    Image(systemName: service.symbol).foregroundStyle(service.color)
-                }
+                ServiceLogo(service: service, size: 15)
+                Text(service.name).font(.callout.weight(.medium))
                 Spacer()
                 Text("\(Int((frac * 100).rounded()))%")
                     .font(.caption)
@@ -125,11 +122,8 @@ private struct AdapterSection: View {
 
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label {
-                    Text("All other sites").font(.callout.weight(.medium))
-                } icon: {
-                    Image(systemName: Service.other.symbol).foregroundStyle(Service.other.color)
-                }
+                ServiceLogo(service: .other, size: 15)
+                Text("All other sites").font(.callout.weight(.medium))
                 Spacer()
                 Text("\(Int((frac * 100).rounded()))%").font(.caption).foregroundStyle(.tertiary)
                 Text(MockData.formatMinutes(otherMinutes)).font(.callout).foregroundStyle(.secondary).monospacedDigit()

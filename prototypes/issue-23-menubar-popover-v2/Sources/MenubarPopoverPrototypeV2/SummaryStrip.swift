@@ -24,9 +24,13 @@ struct SummaryStrip: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(top3, id: \.service) { entry in
-                        Label(MockData.formatMinutes(entry.minutes), systemImage: entry.service.symbol)
-                            .font(.callout)
-                            .foregroundStyle(entry.service.color)
+                        HStack(spacing: 5) {
+                            ServiceLogo(service: entry.service, size: 14)
+                            Text(MockData.formatMinutes(entry.minutes))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
                     }
                 }
                 Spacer()

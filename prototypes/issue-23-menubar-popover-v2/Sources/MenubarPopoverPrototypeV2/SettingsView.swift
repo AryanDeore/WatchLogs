@@ -58,5 +58,10 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
         }
+        // The slide-over sits on top of the popover in a ZStack, so it has
+        // to be fully opaque and fill the frame — otherwise the pane behind
+        // it shows through and the two sets of text overlap.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
