@@ -25,10 +25,9 @@ cd prototypes/issue-23-menubar-popover-v2
 swift run
 ```
 
-Look for a **"2"** in the menu bar (`2.circle.fill`) — not the eye icon. Versions
-are numbered so v1, v2, (v3, ...) can all run at once and stay distinguishable:
-v1 is the eye, this one is "2". `Ctrl+C` or `killall MenubarPopoverPrototypeV2` to
-stop it.
+Look for a **"2"** in the menu bar (`2.circle.fill`). Versions are numbered so v1,
+v2, (v3, ...) can all run at once and stay distinguishable: v1 is "1", this one is
+"2". `Ctrl+C` or `killall MenubarPopoverPrototypeV2` to stop it.
 
 ## What's the same as v1
 

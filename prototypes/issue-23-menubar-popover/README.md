@@ -20,9 +20,10 @@ cd prototypes/issue-23-menubar-popover
 swift run
 ```
 
-Click the eye icon that appears in the menu bar. `⌘Q` or `killall
-MenubarPopoverPrototype` to stop it — it's an unsigned, unbundled binary so it won't
-show up in the Dock.
+Click the **"1"** icon (`1.circle.fill`) that appears in the menu bar — numbered so
+it stays distinguishable from later versions (v2 is "2", etc.) if you run several
+at once. `⌘Q` or `killall MenubarPopoverPrototype` to stop it — it's an unsigned,
+unbundled binary so it won't show up in the Dock.
 
 ## What's mirrored from `prototypes/menubar-layout/`
 

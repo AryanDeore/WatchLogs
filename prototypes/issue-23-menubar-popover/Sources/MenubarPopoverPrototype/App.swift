@@ -7,7 +7,7 @@ import SwiftUI
 @main
 struct MenubarPopoverPrototypeApp: App {
     var body: some Scene {
-        MenuBarExtra("WatchLogs", systemImage: "eye.circle") {
+        MenuBarExtra("WatchLogs (v1)", systemImage: "1.circle.fill") {
             PopoverView()
         }
         .menuBarExtraStyle(.window)
