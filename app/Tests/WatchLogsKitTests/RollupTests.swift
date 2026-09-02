@@ -146,6 +146,39 @@ struct RollupTests {
         #expect(week.watchedMs == frozenSum + openDay.watchedMs)
     }
 
+    @Test("a frozen Day and the live open Day contributing to the same service × contentFormat merge into one slice, for Week, Month, and Custom alike")
+    func mergesFrozenAndLiveContributionsToTheSameKey() throws {
+        let clock = ManualClock(local(2024, 1, 1, 12, 0)) // Monday, also the 1st of the month.
+        let (service, client, store) = try LoopbackServerTests.makeService(clock: clock)
+        defer { service.stop() }
+
+        // Monday: a youtube/standard session, freezes with its own slice.
+        try post(envelope(views: [session(viewId: "mon-yt", startMs: local(2024, 1, 1, 12, 0).epochMillis, durationMs: 60_000)]), to: service, using: client)
+        clock.set(local(2024, 1, 2, 4, 0))
+
+        // Tuesday, the open Day: another youtube/standard session (same key
+        // as Monday's frozen slice) plus a distinct netflix session.
+        clock.set(local(2024, 1, 2, 20, 0))
+        try post(envelope(views: [
+            session(viewId: "tue-yt", startMs: local(2024, 1, 2, 20, 0).epochMillis, durationMs: 30_000),
+            session(viewId: "tue-nf", startMs: local(2024, 1, 2, 20, 5).epochMillis, durationMs: 10_000, service: "netflix", adapterId: "netflix"),
+        ]), to: service, using: client)
+        clock.set(local(2024, 1, 2, 20, 10))
+
+        for kind in [
+            DateRangeKind.thisWeek,
+            .thisMonth,
+            .custom(from: local(2024, 1, 1, 0, 0), through: local(2024, 1, 2, 0, 0)),
+        ] {
+            let slices = try store.slices(for: kind, now: clock.now())
+            // Exactly one row per key — not a separate frozen-only and
+            // live-only entry for youtube/standard.
+            #expect(slices.filter { $0.service == "youtube" && $0.contentFormat == "standard" }.count == 1)
+            #expect(slices.first { $0.service == "youtube" && $0.contentFormat == "standard" }?.totals.watchedMs == 90_000)
+            #expect(slices.first { $0.service == "netflix" && $0.contentFormat == "standard" }?.totals.watchedMs == 10_000)
+        }
+    }
+
     // MARK: - Dropping both rollup tables and rebuilding
 
     @Test("dropping both rollup tables and rebuilding reproduces identical totals from segments")

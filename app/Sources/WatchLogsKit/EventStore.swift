@@ -1,5 +1,17 @@
 import Foundation
 
+/// How a `segments.kind`/summed-milliseconds row read from SQL lands on a
+/// `Totals` — shared by every query that groups Segments by `kind`.
+extension Totals {
+    fileprivate mutating func set(_ kind: Segment.Kind?, milliseconds: Int) {
+        switch kind {
+        case .watched: watchedMs = milliseconds
+        case .background: backgroundMs = milliseconds
+        case nil: break
+        }
+    }
+}
+
 /// The App's storage: the append-only raw Event log, the Segments derived from
 /// it, and the read model the UI asks for totals.
 ///
@@ -240,10 +252,13 @@ public final class EventStore: @unchecked Sendable {
         return merged.sorted { ($0.service, $0.contentFormat) < ($1.service, $1.contentFormat) }
     }
 
+    /// Sum `a` and `b`'s contributions to each `service × contentFormat` key
+    /// into one entry per key — how a frozen-Days total and the live open Day
+    /// combine into one slice list rather than two rows for the same key.
     private static func merge(_ a: [TotalsSlice], _ b: [TotalsSlice]) -> [TotalsSlice] {
         var byKey: [String: TotalsSlice] = [:]
         for slice in a + b {
-            let key = "\(slice.service)\u{0}\(slice.contentFormat)"
+            let key = sliceKey(service: slice.service, contentFormat: slice.contentFormat)
             if var existing = byKey[key] {
                 existing.totals.watchedMs += slice.totals.watchedMs
                 existing.totals.backgroundMs += slice.totals.backgroundMs
@@ -253,6 +268,12 @@ public final class EventStore: @unchecked Sendable {
             }
         }
         return Array(byKey.values)
+    }
+
+    /// The `service × contentFormat` grouping key `slicedTotals` and `merge`
+    /// share — `\u{0}` cannot appear in either field, so it never collides.
+    private static func sliceKey(service: String, contentFormat: String) -> String {
+        "\(service)\u{0}\(contentFormat)"
     }
 
     /// Freeze every Day whose boundary `now` confirms, starting from the
@@ -315,7 +336,13 @@ public final class EventStore: @unchecked Sendable {
     private func tryComputeRollupSlices(label: String, startMs: Int, endMs: Int) throws {
         guard try !hasProvisionalSegment(startMs: startMs, endMs: endMs) else { return }
         try recomputeSlices(label: label, startMs: startMs, endMs: endMs)
-        try database.run("UPDATE rolled_day SET rollup_complete = 1 WHERE logical_date = ?", [.text(label)])
+        // Also stamps the current schema_version: a Day frozen while stale
+        // and only unblocked later would otherwise sit complete under its old
+        // version, and every subsequent reconcile would redo it needlessly.
+        try database.run(
+            "UPDATE rolled_day SET rollup_complete = 1, schema_version = ? WHERE logical_date = ?",
+            [.int(schemaVersion), .text(label)]
+        )
     }
 
     /// Delete and recompute `label`'s `rollup_slice` rows from `segments`.
@@ -364,6 +391,11 @@ public final class EventStore: @unchecked Sendable {
             [.int(schemaVersion)]
         ) { row in stale.append((row.text(0), row.int(1), row.int(2))) }
         for day in stale {
+            // A Day already marked complete should never still hold a
+            // provisional Segment — but if a late-arriving Flush reopened
+            // one, the rollup job's guard (ADR 0004) applies here too: leave
+            // it under its old schema_version and retry next reconcile.
+            guard try !hasProvisionalSegment(startMs: day.startMs, endMs: day.endMs) else { continue }
             try recomputeSlices(label: day.label, startMs: day.startMs, endMs: day.endMs)
             try database.run(
                 "UPDATE rolled_day SET schema_version = ? WHERE logical_date = ?",
@@ -582,12 +614,7 @@ public final class EventStore: @unchecked Sendable {
             """,
             [.int(range.endMs), .int(range.startMs), .int(range.startMs), .int(range.endMs)]
         ) { row in
-            let milliseconds = row.optionalInt(1) ?? 0
-            switch Segment.Kind(rawValue: row.text(0)) {
-            case .watched: totals.watchedMs = milliseconds
-            case .background: totals.backgroundMs = milliseconds
-            case nil: break
-            }
+            totals.set(Segment.Kind(rawValue: row.text(0)), milliseconds: row.optionalInt(1) ?? 0)
         }
         return totals
     }
@@ -610,14 +637,9 @@ public final class EventStore: @unchecked Sendable {
         ) { row in
             let service = row.text(0)
             let contentFormat = row.text(1)
-            let key = "\(service)\u{0}\(contentFormat)"
+            let key = Self.sliceKey(service: service, contentFormat: contentFormat)
             var slice = byKey[key] ?? TotalsSlice(service: service, contentFormat: contentFormat, totals: Totals())
-            let milliseconds = row.optionalInt(3) ?? 0
-            switch Segment.Kind(rawValue: row.text(2)) {
-            case .watched: slice.totals.watchedMs = milliseconds
-            case .background: slice.totals.backgroundMs = milliseconds
-            case nil: break
-            }
+            slice.totals.set(Segment.Kind(rawValue: row.text(2)), milliseconds: row.optionalInt(3) ?? 0)
             byKey[key] = slice
         }
         return Array(byKey.values)
