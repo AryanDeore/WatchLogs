@@ -8,9 +8,9 @@ struct TrendsPane: View {
         let days = range.map(Array.init) ?? []
 
         VStack(alignment: .leading, spacing: 10) {
-            Text("Watched time per day · \(store.range.label) · \(MockData.rangeResolvedLabel(range))")
+            (Text("Watched time per day · ") + Text(store.range.label).foregroundStyle(Theme.ink) + Text(" · \(MockData.rangeResolvedLabel(range))"))
                 .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.inkDim)
 
             if days.count <= 1 {
                 singleDayMix(day: days.first)
@@ -31,17 +31,18 @@ struct TrendsPane: View {
             ForEach(Service.allCases) { service in
                 HStack(spacing: 4) {
                     RoundedRectangle(cornerRadius: 2).fill(service.color).frame(width: 9, height: 9)
-                    Text(service.name).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    Text(service.name).font(.system(size: 10.5)).foregroundStyle(Theme.inkDim)
                 }
             }
         }
+        .padding(.top, 10)
     }
 
     @ViewBuilder
     private func singleDayMix(day: Int?) -> some View {
         Text("A single day has no trend — here's \(day == MockData.today ? "today" : "the day")'s mix:")
             .font(.system(size: 10.5))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(Theme.inkFaint)
 
         let minutes = day.flatMap { MockData.daily[$0] } ?? [:]
         let entries = Service.allCases.compactMap { s -> (Service, Int)? in
@@ -49,7 +50,7 @@ struct TrendsPane: View {
             return m > 0 ? (s, m) : nil
         }
         if entries.isEmpty {
-            Text("nothing watched yet").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+            Text("nothing watched yet").font(.system(size: 10.5)).foregroundStyle(Theme.inkFaint)
         } else {
             VStack(spacing: 6) {
                 ForEach(entries, id: \.0) { service, mins in
@@ -64,7 +65,7 @@ struct TrendsPane: View {
         return VStack(alignment: .leading, spacing: 8) {
             Text("bar length ∝ watch time · longest day = \(MockData.formatMinutes(maxDay))")
                 .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.inkFaint)
             VStack(spacing: 6) {
                 ForEach(days, id: \.self) { day in
                     let total = MockData.dayTotal(day)
@@ -77,7 +78,7 @@ struct TrendsPane: View {
             }
             Text("Horizontal — \(days.count) days (≤ 14).")
                 .font(.system(size: 10.5))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.inkFaint)
         }
     }
 
@@ -85,25 +86,30 @@ struct TrendsPane: View {
         HStack(spacing: 8) {
             Text(label)
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.inkFaint)
                 .frame(width: 52, alignment: .trailing)
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    ForEach(segments, id: \.0) { service, mins in
-                        Rectangle()
-                            .fill(service.color.opacity(0.9))
-                            .frame(width: geo.size.width * (Double(mins) / Double(maxMinutes)))
+            ZStack {
+                if segments.isEmpty {
+                    RoundedRectangle(cornerRadius: 4).fill(Theme.panel2)
+                } else {
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            ForEach(segments, id: \.0) { service, mins in
+                                Rectangle()
+                                    .fill(service.color.opacity(0.9))
+                                    .frame(width: geo.size.width * (Double(mins) / Double(maxMinutes)))
+                            }
+                        }
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
-                .background(segments.isEmpty ? Color(nsColor: .separatorColor).opacity(0.4) : .clear)
             }
             .frame(height: 15)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .separatorColor).opacity(0.4)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.panel2))
             Text(minutes > 0 ? MockData.formatMinutes(minutes) : "–")
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .leading)
+                .foregroundStyle(Theme.inkDim)
+                .frame(width: 52, alignment: .leading)
         }
     }
 
@@ -114,7 +120,7 @@ struct TrendsPane: View {
         return VStack(alignment: .leading, spacing: 4) {
             Text("top of chart = \(MockData.formatMinutes(maxDay))")
                 .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.inkFaint)
             HStack(alignment: .bottom, spacing: dense ? 2 : 4) {
                 ForEach(days, id: \.self) { day in
                     let minutes = MockData.daily[day] ?? [:]
@@ -132,19 +138,19 @@ struct TrendsPane: View {
                 }
             }
             .frame(height: height, alignment: .bottom)
-            .overlay(Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1), alignment: .bottom)
+            .overlay(Rectangle().fill(Theme.line2).frame(height: 1), alignment: .bottom)
             HStack(spacing: dense ? 2 : 4) {
                 ForEach(days.indices, id: \.self) { i in
                     let day = days[i]
                     Text(i % 5 == 0 || day == MockData.today ? "\(day)" : "")
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Theme.inkFaint)
                         .frame(maxWidth: .infinity)
                 }
             }
             Text("Vertical — \(days.count) days (> 14). One column per day, labels every 5th.")
                 .font(.system(size: 10.5))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.inkFaint)
         }
     }
 }

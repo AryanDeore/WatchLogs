@@ -15,7 +15,7 @@ struct HistoryPane: View {
         LazyVStack(alignment: .leading, spacing: 0) {
             Text("Bar under each video = how much of it you've watched.")
                 .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Theme.inkFaint)
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
                 .padding(.bottom, 4)
@@ -36,23 +36,23 @@ struct HistoryPane: View {
                 HStack(spacing: 8) {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Theme.inkFaint)
                         .rotationEffect(.degrees(collapsed ? -90 : 0))
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 5) {
-                            Text(day.name).fontWeight(.semibold)
+                            Text(day.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
                             if let date = day.date {
-                                Text(date).foregroundStyle(.tertiary).font(.system(size: 11.5))
+                                Text(date).foregroundStyle(Theme.inkFaint).font(.system(size: 11.5))
                             }
                         }
                         Text(day.span)
                             .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Theme.inkFaint)
                     }
                     Spacer()
                     Text(MockData.formatMinutes(MockData.dayTotal(day.dayOfMonth)))
                         .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkDim)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
@@ -69,7 +69,7 @@ struct HistoryPane: View {
                 .padding(.vertical, 2)
             }
         }
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
     }
 
     private func viewRow(_ view: MockView) -> some View {
@@ -82,7 +82,8 @@ struct HistoryPane: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(view.title)
-                        .fontWeight(.medium)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     HStack(spacing: 6) {
@@ -90,25 +91,26 @@ struct HistoryPane: View {
                         Text("·")
                         Text(view.at)
                         if view.format != "standard" {
-                            tag(view.format, color: view.format == "live" ? view.service.color : .blue)
+                            tag(view.format, bg: view.format == "live" ? Theme.liveTagBg : Theme.fmtTagBg, fg: view.format == "live" ? view.service.color : Theme.fmtTagFg)
                         }
                         if view.embedded {
-                            tag("embedded", color: .orange)
+                            tag("embedded", bg: Theme.warnSoft, fg: Theme.warn)
                         }
                     }
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.inkDim)
                 }
 
                 Text(view.watched)
                     .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.ink)
             }
 
             if let coverage = view.coverage {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color(nsColor: .separatorColor))
-                        Capsule().fill(Color.accentColor.opacity(0.55))
+                        Capsule().fill(Theme.panel2)
+                        Capsule().fill(Theme.accent.opacity(0.55))
                             .frame(width: geo.size.width * coverage)
                     }
                 }
@@ -117,7 +119,7 @@ struct HistoryPane: View {
             } else {
                 Text("live · no fixed length")
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkFaint)
                     .padding(.leading, 17)
             }
         }
@@ -125,13 +127,13 @@ struct HistoryPane: View {
         .padding(.vertical, 6)
     }
 
-    private func tag(_ text: String, color: Color) -> some View {
+    private func tag(_ text: String, bg: Color, fg: Color) -> some View {
         Text(text)
             .font(.system(size: 10, design: .monospaced))
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(color.opacity(0.15))
-            .foregroundStyle(color)
+            .background(bg)
+            .foregroundStyle(fg)
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }

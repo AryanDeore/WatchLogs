@@ -11,17 +11,18 @@ struct TabsBar: View {
                     .font(.system(size: 11.5, weight: isOn ? .semibold : .regular))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
-                    .background(isOn ? Color(nsColor: .controlBackgroundColor) : .clear)
-                    .foregroundStyle(isOn ? .primary : .secondary)
+                    .background(isOn ? Theme.card : .clear)
+                    .foregroundStyle(isOn ? Theme.ink : Theme.inkDim)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .shadow(color: isOn ? .black.opacity(0.12) : .clear, radius: 2, x: 0, y: 1)
                     .buttonStyle(.plain)
             }
         }
         .padding(2)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background(Theme.panel2)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
     }
 }

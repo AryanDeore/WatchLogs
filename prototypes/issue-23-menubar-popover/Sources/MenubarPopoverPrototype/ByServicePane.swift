@@ -9,9 +9,9 @@ struct ByServicePane: View {
         let grand = max(totals.values.reduce(0, +), 1)
 
         VStack(alignment: .leading, spacing: 0) {
-            Text("Share of watched time · \(store.range.label) · \(MockData.rangeResolvedLabel(range)) · \(MockData.formatMinutes(grand)) total")
+            (Text("Share of watched time · ") + Text(store.range.label).foregroundStyle(Theme.ink).fontWeight(.semibold) + Text(" · \(MockData.rangeResolvedLabel(range)) · \(MockData.formatMinutes(grand)) total"))
                 .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.inkDim)
                 .padding(.horizontal, 14)
                 .padding(.top, 10)
                 .padding(.bottom, 4)
@@ -44,9 +44,10 @@ struct ByServicePane: View {
                     } label: {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Theme.inkFaint)
                     }
                     .buttonStyle(.plain)
+                    .frame(width: 12)
                 } else {
                     Color.clear.frame(width: 12)
                 }
@@ -56,13 +57,14 @@ struct ByServicePane: View {
                     .background(service.color)
                     .foregroundStyle(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
-                Text(service.name).fontWeight(.semibold)
+                Text(service.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
                 Spacer()
                 Text("\(Int((frac * 100).rounded()))%")
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkFaint)
                 Text(MockData.formatMinutes(minutes))
                     .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.ink)
             }
 
             partToWholeBar(frac: frac, color: service.color)
@@ -73,13 +75,13 @@ struct ByServicePane: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
     }
 
     private func partToWholeBar(frac: Double, color: Color) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .separatorColor).opacity(0.5))
+                RoundedRectangle(cornerRadius: 4).fill(Theme.panel2)
                 RoundedRectangle(cornerRadius: 4).fill(color.opacity(0.85))
                     .frame(width: geo.size.width * frac)
             }
@@ -92,15 +94,16 @@ struct ByServicePane: View {
             ForEach(MockData.youtubeSplit, id: \.label) { split in
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
-                        Text(split.label).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(split.label).font(.system(size: 11)).foregroundStyle(Theme.inkDim)
                         Spacer()
                         Text(MockData.formatMinutes(Int(Double(totalMinutes) * split.frac)))
                             .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Theme.ink)
                     }
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 3).fill(Color(nsColor: .separatorColor).opacity(0.5))
-                            RoundedRectangle(cornerRadius: 3).fill(Service.youtube.color.opacity(0.5))
+                            RoundedRectangle(cornerRadius: 3).fill(Theme.panel2)
+                            RoundedRectangle(cornerRadius: 3).fill(Theme.yt.opacity(0.5))
                                 .frame(width: geo.size.width * split.frac)
                         }
                     }
@@ -108,13 +111,13 @@ struct ByServicePane: View {
                 }
             }
             HStack {
-                Text("— of which embedded").font(.system(size: 10.5)).foregroundStyle(.orange)
+                Text("— of which embedded").font(.system(size: 10.5)).foregroundStyle(Theme.warn)
                 Spacer()
                 Text(MockData.formatMinutes(Int(Double(totalMinutes) * MockData.youtubeEmbeddedFrac)))
-                    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.orange)
+                    .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.warn)
             }
             .padding(.top, 4)
-            .overlay(Divider().opacity(0.6), alignment: .top)
+            .overlay(Rectangle().fill(Theme.line2).frame(height: 1), alignment: .top)
         }
         .padding(.leading, 23)
         .padding(.top, 2)
@@ -124,16 +127,20 @@ struct ByServicePane: View {
     private func adapterSection(otherMinutes: Int, grand: Int) -> some View {
         let frac = Double(otherMinutes) / Double(grand)
 
-        Label("OTHER SITES — NEED AN ADAPTER", systemImage: "exclamationmark.triangle.fill")
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(.orange)
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 2)
+        HStack(spacing: 7) {
+            Text("⚠").font(.system(size: 11, weight: .bold))
+            Text("OTHER SITES — NEED AN ADAPTER")
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.6)
+        }
+        .foregroundStyle(Theme.warn)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 2)
 
         Text("\(Int((frac * 100).rounded()))% of the range · \(MockData.formatMinutes(otherMinutes)). Counted, but metadata is thin.")
             .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Theme.inkDim)
             .padding(.horizontal, 14)
             .padding(.bottom, 4)
 
@@ -143,22 +150,23 @@ struct ByServicePane: View {
                 Text("•")
                     .font(.system(size: 9, weight: .bold))
                     .frame(width: 15, height: 15)
-                    .background(Service.other.color)
+                    .background(Theme.other)
                     .foregroundStyle(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
-                Text("All other sites").fontWeight(.semibold)
+                Text("All other sites").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
                 Spacer()
                 Text("\(Int((frac * 100).rounded()))%")
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkFaint)
                 Text(MockData.formatMinutes(otherMinutes))
                     .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.ink)
             }
-            partToWholeBar(frac: frac, color: Service.other.color)
+            partToWholeBar(frac: frac, color: Theme.other)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
 
         ForEach(MockData.needsAdapter, id: \.name) { entry in
             VStack(alignment: .leading, spacing: 3) {
@@ -167,22 +175,23 @@ struct ByServicePane: View {
                     Text("•")
                         .font(.system(size: 9, weight: .bold))
                         .frame(width: 15, height: 15)
-                        .background(Service.other.color.opacity(0.6))
+                        .background(Theme.other.opacity(0.6))
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
-                    Text(entry.name).fontWeight(.semibold)
+                    Text(entry.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.ink)
                     Spacer()
                     Text(MockData.formatMinutes(Int(Double(otherMinutes) * entry.share)))
                         .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.ink)
                 }
                 Text(entry.note)
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkFaint)
                     .padding(.leading, 23)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .overlay(Divider(), alignment: .bottom)
+            .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
         }
     }
 }

@@ -20,7 +20,7 @@ struct SummaryStrip: View {
                 if top3.isEmpty {
                     Text("no watch time in range")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkDim)
                 } else {
                     ForEach(top3, id: \.service) { entry in
                         HStack(spacing: 5) {
@@ -32,21 +32,21 @@ struct SummaryStrip: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                             Text(MockData.formatMinutes(entry.minutes))
                                 .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.inkDim)
                         }
                     }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkFaint)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .underPageBackgroundColor))
+            .background(Theme.panel)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
     }
 }

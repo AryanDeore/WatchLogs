@@ -15,17 +15,20 @@ struct PopoverView: View {
                     paneBody
                 }
             }
+            .background(Theme.card)
 
             if store.settingsOpen {
                 SettingsView(store: store)
-                    .background(.background)
                     .transition(.move(edge: .trailing))
                     .zIndex(1)
             }
         }
         .frame(width: 380, height: 560)
-        .background(.background)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
         .animation(.easeOut(duration: 0.18), value: store.settingsOpen)
+        .preferredColorScheme(.light)
     }
 
     @ViewBuilder

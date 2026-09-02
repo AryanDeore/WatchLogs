@@ -28,14 +28,12 @@ enum Service: String, CaseIterable, Identifiable {
         }
     }
 
-    // Viz palette departs from brand so stacked bars stay legible
-    // (YouTube and Netflix are both red in reality).
     var color: Color {
         switch self {
-        case .youtube: Color(red: 0.90, green: 0.20, blue: 0.17)
-        case .netflix: Color(red: 0.88, green: 0.56, blue: 0.18)
-        case .twitch: Color(red: 0.48, green: 0.36, blue: 1.0)
-        case .other: Color(red: 0.60, green: 0.63, blue: 0.68)
+        case .youtube: Theme.yt
+        case .netflix: Theme.nflx
+        case .twitch: Theme.twitch
+        case .other: Theme.other
         }
     }
 }

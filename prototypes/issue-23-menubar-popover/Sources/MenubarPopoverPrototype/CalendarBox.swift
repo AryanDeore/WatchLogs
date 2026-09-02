@@ -8,22 +8,32 @@ struct CalendarBox: View {
             HStack(spacing: 6) {
                 if store.calOpen {
                     Button { shiftMonth(-1) } label: { Image(systemName: "chevron.left") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .buttonStyle(.plain).foregroundStyle(Theme.inkDim).font(.system(size: 13))
                     Text(monthLabel)
                         .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Theme.ink)
                     Button { shiftMonth(1) } label: { Image(systemName: "chevron.right") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .buttonStyle(.plain).foregroundStyle(Theme.inkDim).font(.system(size: 13))
                 } else {
                     Text(MockData.rangeResolvedLabel(store.resolvedRange))
                         .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Theme.ink)
                 }
                 Spacer()
                 Button(store.calOpen ? "collapse ▴" : "expand ▾") {
                     store.calOpen.toggle()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .font(.system(size: 10))
+                .foregroundStyle(Theme.inkDim)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Theme.card)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line2, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Theme.inkDim)
 
             if store.calOpen {
                 monthGrid
@@ -34,7 +44,7 @@ struct CalendarBox: View {
         .padding(.horizontal, 12)
         .padding(.top, 9)
         .padding(.bottom, 10)
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
     }
 
     private var monthLabel: String {
@@ -60,24 +70,24 @@ struct CalendarBox: View {
         return HStack(spacing: 1) {
             ForEach(days, id: \.self) { day in
                 let inRange = range.map { $0.contains(day) } ?? false
+                let isStart = inRange && day == range?.lowerBound
+                let isEnd = inRange && day == range?.upperBound
                 VStack(spacing: 2) {
                     Text(MockData.weekdayLetter[day] ?? "")
                         .font(.system(size: 8.5))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Theme.inkFaint)
                         .textCase(.uppercase)
                     Text("\(day)")
                         .font(.system(size: 11, design: .monospaced))
                         .frame(width: 18, height: 16)
-                        .background(day == MockData.today ? Color.accentColor : .clear)
-                        .foregroundStyle(day == MockData.today ? .white : .primary)
+                        .background(day == MockData.today ? Theme.accent : .clear)
+                        .foregroundStyle(day == MockData.today ? .white : Theme.ink)
                         .clipShape(Circle())
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 5)
-                .background(inRange ? Color.accentColor.opacity(0.14) : .clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .contentShape(Rectangle())
-                .onTapGesture { store.pickCustomDay(day) }
+                .background(inRange ? Theme.accentSoft : .clear)
+                .clipShape(rangeShape(isStart: isStart, isEnd: isEnd, active: inRange))
             }
         }
     }
@@ -92,7 +102,7 @@ struct CalendarBox: View {
         return VStack(spacing: 1) {
             HStack(spacing: 1) {
                 ForEach(dows.indices, id: \.self) { i in
-                    Text(dows[i]).font(.system(size: 8.5)).foregroundStyle(.tertiary)
+                    Text(dows[i]).font(.system(size: 8.5)).foregroundStyle(Theme.inkFaint)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -105,16 +115,27 @@ struct CalendarBox: View {
                     let isFuture = isAugust2026 && day > MockData.today
                     Text("\(day)")
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(isFuture ? .tertiary : .primary)
                         .frame(maxWidth: .infinity, minHeight: 24)
-                        .background(isToday ? Color.accentColor : (inRange ? Color.accentColor.opacity(0.14) : Color.clear))
-                        .foregroundStyle(isToday ? Color.white : (isFuture ? Color(nsColor: .tertiaryLabelColor) : Color.primary))
+                        .background(isToday ? Theme.accent : (inRange ? Theme.accentSoft : Color.clear))
+                        .foregroundStyle(isToday ? Color.white : (isFuture ? Theme.inkFaint : Theme.ink))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                         .onTapGesture { if isAugust2026 { store.pickCustomDay(day) } }
                 }
             }
         }
+    }
+
+    private func rangeShape(isStart: Bool, isEnd: Bool, active: Bool) -> UnevenRoundedRectangle {
+        guard active else {
+            return UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: 6)
+        }
+        return UnevenRoundedRectangle(
+            topLeadingRadius: isStart ? 6 : 0,
+            bottomLeadingRadius: isStart ? 6 : 0,
+            bottomTrailingRadius: isEnd ? 6 : 0,
+            topTrailingRadius: isEnd ? 6 : 0
+        )
     }
 
     private var daysInMonth: Int {

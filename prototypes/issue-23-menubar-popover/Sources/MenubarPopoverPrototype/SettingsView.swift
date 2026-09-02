@@ -10,13 +10,15 @@ struct SettingsView: View {
                     store.settingsOpen = false
                 } label: {
                     Image(systemName: "chevron.left")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.inkDim)
                 }
                 .buttonStyle(.plain)
-                Text("Settings").fontWeight(.bold)
+                Text("Settings").font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.ink)
                 Spacer()
             }
             .padding(12)
-            .overlay(Divider(), alignment: .bottom)
+            .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .bottom)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -24,21 +26,27 @@ struct SettingsView: View {
                         HStack(spacing: 6) {
                             Text(store.settings.pairingToken)
                                 .font(.system(size: 12, design: .monospaced))
-                                .padding(6)
+                                .foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 5)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(nsColor: .controlBackgroundColor))
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                            Button("Copy") {}.buttonStyle(.bordered).font(.system(size: 11))
-                            Button("Regenerate") {}.buttonStyle(.bordered).font(.system(size: 11))
+                                .background(Theme.card)
+                                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.line2, lineWidth: 1))
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                            miniButton("Copy") {}
+                            miniButton("Regenerate") {}
                         }
                     }
 
                     field(label: "Local port", hint: "App listens on 127.0.0.1. Re-rolls if taken.") {
                         Text("\(store.settings.port)")
                             .font(.system(size: 12, design: .monospaced))
-                            .padding(6)
-                            .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .foregroundStyle(Theme.ink)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Theme.card)
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.line2, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
 
                     field(label: "Keep raw events for", hint: "Views and computed time are kept forever; only the raw log is pruned.") {
@@ -54,43 +62,83 @@ struct SettingsView: View {
                     }
 
                     field(label: "Launch at login", hint: nil) {
-                        Toggle("", isOn: $store.settings.launchAtLogin)
-                            .toggleStyle(.switch)
-                            .labelsHidden()
+                        toggleSwitch(isOn: $store.settings.launchAtLogin)
                     }
 
                     Text(store.settings.version)
                         .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Theme.inkFaint)
 
-                    Text("Rebuild statistics").font(.system(size: 11))
-                        .foregroundStyle(.blue)
+                    Text("Rebuild statistics")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.accent)
                         .onTapGesture {}
                 }
                 .padding(14)
             }
         }
+        .background(Theme.card)
     }
 
     @ViewBuilder
     private func field<Content: View>(label: String, hint: String?, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 12, weight: .semibold))
+            Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.ink)
             if let hint {
-                Text(hint).font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text(hint).font(.system(size: 11)).foregroundStyle(Theme.inkFaint)
             }
             content()
         }
     }
 
+    private func miniButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Theme.card)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line2, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .fixedSize()
+    }
+
     private func stepper(value: String, decrement: @escaping () -> Void, increment: @escaping () -> Void) -> some View {
         HStack(spacing: 0) {
-            Button("–", action: decrement).buttonStyle(.plain).padding(.horizontal, 10).padding(.vertical, 5)
-            Text(value).font(.system(size: 12, design: .monospaced)).padding(.horizontal, 12)
-                .overlay(Rectangle().frame(width: 1).foregroundStyle(Color(nsColor: .separatorColor)), alignment: .leading)
-                .overlay(Rectangle().frame(width: 1).foregroundStyle(Color(nsColor: .separatorColor)), alignment: .trailing)
-            Button("+", action: increment).buttonStyle(.plain).padding(.horizontal, 10).padding(.vertical, 5)
+            Button("–", action: decrement)
+                .buttonStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+            Text(value)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 12)
+                .overlay(Rectangle().frame(width: 1).foregroundStyle(Theme.line2), alignment: .leading)
+                .overlay(Rectangle().frame(width: 1).foregroundStyle(Theme.line2), alignment: .trailing)
+            Button("+", action: increment)
+                .buttonStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(Theme.ink)
+                .padding(.horizontal, 10).padding(.vertical, 5)
         }
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color(nsColor: .separatorColor), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.line2, lineWidth: 1))
+    }
+
+    private func toggleSwitch(isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            ZStack(alignment: isOn.wrappedValue ? .trailing : .leading) {
+                Capsule().fill(isOn.wrappedValue ? Theme.good : Theme.line2)
+                    .frame(width: 34, height: 20)
+                Circle().fill(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 3, x: 0, y: 1)
+                    .frame(width: 16, height: 16)
+                    .padding(2)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
