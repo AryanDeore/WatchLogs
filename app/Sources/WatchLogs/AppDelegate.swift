@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Pairing String…", action: #selector(showPairingString), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Regenerate Token", action: #selector(regenerateToken), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Day Boundary…", action: #selector(showDayBoundarySettings), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit WatchLogs", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -119,6 +120,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if alert.runModal() == .alertFirstButtonReturn {
             copyToPasteboard(pairingString)
+        }
+    }
+
+    /// The Day target hour (ADR 0001): a local hour a Day aims to end at,
+    /// sliding later only while watched-time activity is still going. Takes
+    /// effect for the currently open Day; a Day already frozen never moves.
+    @objc private func showDayBoundarySettings() {
+        let current = (try? transport.targetHour()) ?? DayBoundary.defaultTargetHour
+
+        let alert = NSAlert()
+        alert.messageText = "Day target hour"
+        alert.informativeText = "A Day aims to end at this local hour (0–9) once nothing is playing. It slides later while you're still watching, capped at 10:00. Default is 4 (4:00 AM)."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 60, height: 24))
+        field.stringValue = "\(current)"
+        alert.accessoryView = field
+
+        // Must stay strictly before the fixed 10:00 cap, or the cap would
+        // stop acting as a same-day backstop (DayBoundary derives it as an
+        // offset from the target hour).
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let hour = Int(field.stringValue),
+              (0..<DayBoundary.hardCapHour).contains(hour)
+        else { return }
+
+        do {
+            try transport.setTargetHour(hour)
+        } catch {
+            presentFatal("Could not save the Day target hour: \(error)")
         }
     }
 

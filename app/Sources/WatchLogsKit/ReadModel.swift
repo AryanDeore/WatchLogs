@@ -14,18 +14,6 @@ public struct DateRange: Equatable, Sendable {
         self.startMs = startMs
         self.endMs = endMs
     }
-
-    /// The naive local calendar day containing `date`.
-    ///
-    /// Deliberately naive: WatchLogs's real **Day** flexes with the user's
-    /// activity (ADR 0001), so a session running 23:00 → 02:00 belongs to one Day
-    /// labelled by its start date. That boundary detector is slice 4's job; until
-    /// it lands, "today" is midnight to midnight and a late-night session splits.
-    public static func day(containing date: Date, calendar: Calendar = .current) -> DateRange {
-        let start = calendar.startOfDay(for: date)
-        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
-        return DateRange(startMs: start.epochMillis, endMs: end.epochMillis)
-    }
 }
 
 /// Watched time and Background audio over some range, in milliseconds.
@@ -47,4 +35,35 @@ public struct Totals: Equatable, Sendable {
     static func seconds(_ milliseconds: Int) -> Int {
         Int((Double(milliseconds) / 1000).rounded())
     }
+}
+
+/// The four ranges the UI's shared date-range selector offers (issue #18 —
+/// preset chips Today / This Week / This Month / Custom).
+///
+/// Range membership follows a Day's **label**, not its wall-clock end (ADR
+/// 0001): a Day labelled Aug 25 that ran to 05:10 on Aug 26 is in the week of
+/// Aug 25 and in August.
+public enum DateRangeKind: Equatable, Sendable {
+    /// The current open Day.
+    case today
+    /// Monday through the open Day, of the week containing the open Day's label.
+    case thisWeek
+    /// The 1st through the open Day, of the month containing the open Day's label.
+    case thisMonth
+    /// Whole Days, inclusive, by label. `through` in the future clips to the
+    /// open Day.
+    case custom(from: Date, through: Date)
+}
+
+/// One frozen Day (ADR 0001): its absolute, never-re-evaluated boundaries and
+/// the Watched/Background totals snapshotted at freeze time, so a later,
+/// out-of-order Event landing inside it cannot move its numbers.
+public struct FrozenDay: Equatable, Sendable {
+    /// `yyyy-MM-dd`, the calendar date the Day began — its label.
+    public var label: String
+    public var dayStartMs: Int
+    /// Exclusive.
+    public var dayEndMs: Int
+    public var watchedMs: Int
+    public var backgroundMs: Int
 }
