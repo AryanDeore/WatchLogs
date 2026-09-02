@@ -55,6 +55,11 @@ public final class LoopbackTransport: @unchecked Sendable {
         try store.setTargetHour(hour)
     }
 
+    /// The manual "Rebuild statistics" Settings action (ADR 0004).
+    public func rebuildStatistics() throws {
+        try store.rebuildStatistics(now: clock.now())
+    }
+
     /// Bind the server (rolling the port on collision).
     public func start() throws {
         try server.start()
