@@ -40,10 +40,15 @@ Look for **"5"** in the menu bar (`5.circle.fill`). `Ctrl+C` or
 
 ## What's different from v2
 
-One file. `TabBar.swift`'s hand-built icon+label row is replaced by a stock
-segmented `Picker` bound to `store.pane`, at the same padding so the rest of the
-layout doesn't shift. Same 380pt width. Mock data, state model, panes, calendar,
+`TabBar.swift`'s hand-built icon+label row is replaced by a stock segmented
+`Picker` bound to `store.pane`, at the same padding so the rest of the layout
+doesn't shift. Same 380pt width. Mock data, state model, panes, calendar,
 Settings, and the thin scrollbar are byte-identical to v2.
+
+Also carried over from v2: the window height is dynamic rather than a fixed
+560pt (`PopoverView.swift`, `HeightReader.swift`), sized to whatever the
+calendar and the active pane actually need, clamped to a floor and ceiling. See
+v2's README for why.
 
 ## Status
 

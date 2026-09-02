@@ -8,7 +8,7 @@ struct HistoryPane: View {
         if store.range == .today {
             return MockData.history.filter { $0.id == "today" }
         }
-        return MockData.history.filter { range.contains($0.dayOfMonth) }
+        return MockData.history.filter { range.contains($0.date) }
     }
 
     var body: some View {
@@ -59,8 +59,8 @@ private struct HistoryDayRow: View {
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 5) {
                             Text(day.name).font(.callout.weight(.semibold))
-                            if let date = day.date {
-                                Text(date).font(.caption).foregroundStyle(.secondary)
+                            if let dateLabel = day.dateLabel {
+                                Text(dateLabel).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         Text(day.span).font(.caption2).foregroundStyle(.tertiary)
@@ -68,7 +68,7 @@ private struct HistoryDayRow: View {
 
                     Spacer(minLength: 8)
 
-                    Text(MockData.formatMinutes(MockData.dayTotal(day.dayOfMonth)))
+                    Text(MockData.formatMinutes(MockData.dayTotal(day.date)))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()

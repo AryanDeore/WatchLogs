@@ -116,6 +116,31 @@ before this ships.
   ends up sitting on top of a second, wider bar.
 - Same `Color`-vs-`ShapeStyle` friction as v1 (`.tertiary` on a `Color`-typed
   ternary branch needs an explicit `Color(nsColor: .tertiaryLabelColor)`).
+- A fixed 560pt window height meant Custom's expanded month grid (~190pt) could
+  crowd out a 14-day Trends chart enough to force scrolling to see the last few
+  bars. Fixed to window content instead of a fixed frame: `ThinScrollView`
+  already measured its own content height for the knob math
+  (`ThinScrollView.swift`), so that value is now piped up via a callback and,
+  combined with a `measureHeight` on the chrome above it (`HeightReader.swift`),
+  drives the window's height directly — clamped to a floor (so a near-empty pane
+  doesn't shrink to a sliver) and a ceiling read from `NSScreen.main`'s visible
+  height, past which `ThinScrollView` still scrolls, same as before. This
+  responds to *any* pane's content, not just the calendar — a short History list
+  now shrinks the window too.
+- **A preference set inside `.background` does not propagate out to an
+  `.onPreferenceChange` on the modified view.** The first version of
+  `measureHeight` was a `PreferenceKey` in a `.background` `GeometryReader`; it
+  silently reported `0` forever, so the window got sized as though the entire
+  header (title, range presets, calendar, summary strip, tab bar — 364pt with the
+  month grid open) had no height, and the chart stayed cut off. Nothing errors and
+  nothing logs; the value is just always the default. `GeometryReader` +
+  `onAppear`/`onChange` callbacks work fine in the same position, which is what
+  `ThinScrollView` was already doing — worth copying the shape that demonstrably
+  works rather than reaching for preferences.
+- `MenuBarExtra(.window)` **does** honour a dynamic `.frame(height:)` — the panel
+  tracks it. Verified by instrumenting the hosting `NSWindow`: with the header
+  measured correctly, a Custom 14-day range on Trends reports chrome 364 + pane
+  303 = 667, and the window is 667.
 - The pane switcher stayed unsettled through both versions — pulled out into its
   own prototype, `prototypes/issue-23-menubar-popover-v3/`.
 - Verified with `swift build` (clean) and a `swift run` smoke test (launches,

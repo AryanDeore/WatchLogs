@@ -16,7 +16,7 @@ struct TrendsPane: View {
 
     var body: some View {
         let range = store.resolvedRange
-        let days = range.map(Array.init) ?? []
+        let days = range?.days ?? []
 
         VStack(alignment: .leading, spacing: 10) {
             if days.count <= 1 {
@@ -45,7 +45,7 @@ struct TrendsPane: View {
     }
 
     @ViewBuilder
-    private func singleDayMix(day: Int?) -> some View {
+    private func singleDayMix(day: MockDate?) -> some View {
         let minutes = day.flatMap { MockData.daily[$0] } ?? [:]
         let entries = Service.allCases.compactMap { s -> (Service, Int)? in
             let m = minutes[s] ?? 0
@@ -55,43 +55,47 @@ struct TrendsPane: View {
             Text("Nothing watched yet").font(.caption).foregroundStyle(.tertiary)
         } else {
             let maxMinutes = entries.map(\.1).max() ?? 1
-            VStack(spacing: 6) {
+            VStack(spacing: 9) {
                 ForEach(entries, id: \.0) { service, mins in
                     TrendRow(
                         label: service.name,
                         total: mins,
                         segments: [(service, mins)],
-                        scaleMax: maxMinutes
+                        scaleMax: maxMinutes,
+                        barHeight: BarMetrics.pane
                     )
                 }
             }
         }
     }
 
-    private func horizontalBars(days: [Int]) -> some View {
+    private func horizontalBars(days: [MockDate]) -> some View {
         let maxDay = max(days.map(MockData.dayTotal).max() ?? 1, 1)
         return VStack(alignment: .leading, spacing: 8) {
-            VStack(spacing: 6) {
+            // 9pt, not 6: the rows carry a 3pt bar now instead of a 10pt one,
+            // so the same gap left them looking stacked on top of each other.
+            VStack(spacing: 9) {
                 ForEach(days, id: \.self) { day in
                     let segments = Service.allCases.compactMap { s -> (Service, Int)? in
                         let m = (MockData.daily[day] ?? [:])[s] ?? 0
                         return m > 0 ? (s, m) : nil
                     }
                     TrendRow(
-                        label: "\(MockData.weekdayName[day] ?? "Aug") \(day)",
+                        label: "\(day.weekdayName) \(day.day)",
                         total: MockData.dayTotal(day),
                         segments: segments,
-                        scaleMax: maxDay
+                        scaleMax: maxDay,
+                        barHeight: BarMetrics.pane
                     )
                 }
             }
         }
     }
 
-    private func verticalChart(days: [Int]) -> some View {
+    private func verticalChart(days: [MockDate]) -> some View {
         struct DataPoint: Identifiable {
             let id = UUID()
-            let day: Int
+            let day: MockDate
             let service: Service
             let minutes: Int
         }
@@ -110,7 +114,7 @@ struct TrendsPane: View {
         return VStack(alignment: .leading, spacing: 4) {
             Chart(points) { point in
                 BarMark(
-                    x: .value("Day", point.day),
+                    x: .value("Day", point.day.date),
                     y: .value("Minutes", point.minutes)
                 )
                 .foregroundStyle(by: .value("Service", point.service.name))
@@ -139,6 +143,7 @@ private struct TrendRow: View {
     let total: Int
     let segments: [(Service, Int)]
     let scaleMax: Int
+    let barHeight: CGFloat
 
     var body: some View {
         HStack(spacing: 8) {
@@ -161,7 +166,7 @@ private struct TrendRow: View {
                     .clipShape(Capsule())
                 }
             }
-            .frame(height: 10)
+            .frame(height: barHeight)
 
             Text(total > 0 ? MockData.formatMinutes(total) : "—")
                 .font(.caption)

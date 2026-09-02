@@ -20,12 +20,17 @@ which is the scarce axis in a fixed-height popover. Its whole cost is **width**,
 which in v3 meant carving ~54pt out of the panes' 380pt.
 
 This prototype refuses that trade and asks a different question: **what if the
-window just gets wider instead?** The panes keep exactly the 380pt they have in
-v2, the rail is added beside them, and the window grows to 435pt. So:
+window just gets wider instead?** The rail is added beside the panes rather than
+carved out of them. First cut: panes kept exactly v2's 380pt and the window grew
+to 435pt — which read as too wide, so the window is now **370pt** (435 × 0.85),
+with the 65pt difference taken out of the pane column (315pt) rather than the
+44pt rail items, which were already close to the minimum that still fits an icon
+plus an 8pt label. So:
 
-- Is a 435pt-wide menu-bar popover still comfortable, or does it start to feel
+- Is a 370pt-wide menu-bar popover still comfortable, or does it start to feel
   like a window rather than a menu?
-- Does the vertical rail earn a permanent 54pt column for three items?
+- Does the vertical rail earn a permanent column for three items, now that it's
+  costing pane width (315pt vs. v2/v5's 380pt) rather than just window width?
 
 ## Run it
 
@@ -45,11 +50,24 @@ Exactly two files, plus one enum case:
 | File | Change |
 |---|---|
 | `TabBar.swift` → `PaneRail.swift` | Horizontal icon+label bar replaced by a vertical rail: 44pt items, icon over an 8pt label, accent-filled selection, faint `Color.primary.opacity(0.04)` backing to read as a sidebar. |
-| `PopoverView.swift` | Window widened to `380 + PaneRail.width + 1`; the rail and the scrolling pane sit in an `HStack` below the summary strip, with the pane pinned to 380pt. |
+| `PopoverView.swift` | Window fixed at 370pt (see above); the rail and the scrolling pane sit in an `HStack` below the summary strip, with the pane pinned to `370 - PaneRail.width - 1` (315pt). Height is now dynamic — see below. |
 | `MockData.swift` | `Pane.shortLabel` added — "By Service" doesn't fit 44pt, so the rail says "Services". |
+| `HeightReader.swift` | New — same measurement helper as v2, carried over so this prototype gets the same dynamic-height fix (below) rather than drifting from it. |
 
 Everything else — mock data, state model, History / By Service / Trends, the
 calendar, Settings, the thin scrollbar — is byte-identical to v2.
+
+### Dynamic height
+
+Also carried over from v2 (both were fixed at the same time, from the same
+report — a 14-day Custom-range Trends chart getting squeezed out by the
+expanded month calendar, forcing a scroll to see the last few bars): the window
+height is no longer a fixed 560pt. `ThinScrollView` already measured its own
+content's height for the scrollbar-knob math; that's now piped up via a
+callback, combined with a `measureHeight` on the chrome above the rail/pane row,
+and used to size the window directly — clamped to a floor and a ceiling (past
+which `ThinScrollView` scrolls, as before). Same behavior as v2: a short pane
+shrinks the window, a tall one (up to the ceiling) grows it.
 
 ### Where the rail starts
 

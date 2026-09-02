@@ -5,15 +5,15 @@ final class PopoverStore {
     var range: RangePreset = .week
     var pane: Pane = .history
     var calOpen = false // false = collapsed week row, true = full month grid
-    var calMonth = 8 // 1-12; mock data only exists for August 2026
+    var calMonth = 8 // 1-12; mock data spans Jun–Aug 2026
     var calYear = 2026
-    var customStart: Int?
-    var customEnd: Int?
+    var customStart: MockDate?
+    var customEnd: MockDate?
     var youtubeExpanded = true
     var settingsOpen = false
     var settings = MockSettings()
 
-    var resolvedRange: ClosedRange<Int>? {
+    var resolvedRange: ClosedRange<MockDate>? {
         MockData.rangeDays(range, customStart: customStart, customEnd: customEnd)
     }
 
@@ -31,7 +31,7 @@ final class PopoverStore {
         if preset != .custom { customStart = nil; customEnd = nil }
     }
 
-    func pickCustomDay(_ day: Int) {
+    func pickCustomDay(_ day: MockDate) {
         if customStart == nil || (customStart != nil && customEnd != nil) {
             customStart = day
             customEnd = nil

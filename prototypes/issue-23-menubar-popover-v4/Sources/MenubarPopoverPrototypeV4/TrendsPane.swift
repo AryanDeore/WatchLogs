@@ -16,7 +16,7 @@ struct TrendsPane: View {
 
     var body: some View {
         let range = store.resolvedRange
-        let days = range.map(Array.init) ?? []
+        let days = range?.days ?? []
 
         VStack(alignment: .leading, spacing: 10) {
             if days.count <= 1 {
@@ -45,7 +45,7 @@ struct TrendsPane: View {
     }
 
     @ViewBuilder
-    private func singleDayMix(day: Int?) -> some View {
+    private func singleDayMix(day: MockDate?) -> some View {
         let minutes = day.flatMap { MockData.daily[$0] } ?? [:]
         let entries = Service.allCases.compactMap { s -> (Service, Int)? in
             let m = minutes[s] ?? 0
@@ -68,7 +68,7 @@ struct TrendsPane: View {
         }
     }
 
-    private func horizontalBars(days: [Int]) -> some View {
+    private func horizontalBars(days: [MockDate]) -> some View {
         let maxDay = max(days.map(MockData.dayTotal).max() ?? 1, 1)
         return VStack(alignment: .leading, spacing: 8) {
             VStack(spacing: 6) {
@@ -78,7 +78,7 @@ struct TrendsPane: View {
                         return m > 0 ? (s, m) : nil
                     }
                     TrendRow(
-                        label: "\(MockData.weekdayName[day] ?? "Aug") \(day)",
+                        label: "\(day.weekdayName) \(day.day)",
                         total: MockData.dayTotal(day),
                         segments: segments,
                         scaleMax: maxDay
@@ -88,10 +88,10 @@ struct TrendsPane: View {
         }
     }
 
-    private func verticalChart(days: [Int]) -> some View {
+    private func verticalChart(days: [MockDate]) -> some View {
         struct DataPoint: Identifiable {
             let id = UUID()
-            let day: Int
+            let day: MockDate
             let service: Service
             let minutes: Int
         }
@@ -110,7 +110,7 @@ struct TrendsPane: View {
         return VStack(alignment: .leading, spacing: 4) {
             Chart(points) { point in
                 BarMark(
-                    x: .value("Day", point.day),
+                    x: .value("Day", point.day.date),
                     y: .value("Minutes", point.minutes)
                 )
                 .foregroundStyle(by: .value("Service", point.service.name))

@@ -61,19 +61,20 @@ struct CalendarBox: View {
     }
 
     private var weekRow: some View {
-        let days = Array(25...31)
+        let startOfWeek = MockData.today.adding(days: -MockData.today.isoWeekdayMondayFirst)
+        let days = (0..<7).map { startOfWeek.adding(days: $0) }
         let range = store.resolvedRange
         return HStack(spacing: 2) {
             ForEach(days, id: \.self) { day in
                 let inRange = range.map { $0.contains(day) } ?? false
                 VStack(spacing: 3) {
-                    Text(MockData.weekdayLetter[day] ?? "")
+                    Text(day.weekdayLetter)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     // Today is bold rather than circled: the in-range box
                     // behind it already marks the cell, and two shapes on the
                     // same day read as two different things.
-                    Text("\(day)")
+                    Text("\(day.day)")
                         .font(day == MockData.today ? .callout.weight(.bold) : .callout)
                         .frame(width: 22, height: 22)
                 }
@@ -86,7 +87,6 @@ struct CalendarBox: View {
     }
 
     private var monthGrid: some View {
-        let isAugust2026 = store.calMonth == 8 && store.calYear == 2026
         let dim = daysInMonth
         let lead = leadingBlankCount
         let range = store.resolvedRange
@@ -109,9 +109,10 @@ struct CalendarBox: View {
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(cells) { cell in
                     if let day = cell.day {
-                        let inRange = isAugust2026 && (range.map { $0.contains(day) } ?? false)
-                        let isToday = isAugust2026 && day == MockData.today
-                        let isFuture = isAugust2026 && day > MockData.today
+                        let cellDate = MockDate(year: store.calYear, month: store.calMonth, day: day)
+                        let inRange = range.map { $0.contains(cellDate) } ?? false
+                        let isToday = cellDate == MockData.today
+                        let isFuture = cellDate > MockData.today
                         Text("\(day)")
                             .font(isToday ? .callout.weight(.bold) : .callout)
                             .frame(maxWidth: .infinity, minHeight: 24)
@@ -119,7 +120,7 @@ struct CalendarBox: View {
                             .foregroundStyle(isFuture ? Color(nsColor: .tertiaryLabelColor) : Color.primary)
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                             .contentShape(Rectangle())
-                            .onTapGesture { if isAugust2026 { store.pickCustomDay(day) } }
+                            .onTapGesture { if !isFuture { store.pickCustomDay(cellDate) } }
                     } else {
                         Color.clear.frame(height: 24)
                     }

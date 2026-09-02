@@ -19,7 +19,7 @@ struct ByServicePane: View {
 
             let otherMinutes = totals[.other] ?? 0
             if otherMinutes > 0 {
-                AdapterSection(otherMinutes: otherMinutes, grand: grand)
+                AdapterSection(otherMinutes: otherMinutes, grand: grand, barHeight: BarMetrics.pane)
             }
         }
         .padding(.vertical, 4)
@@ -36,51 +36,68 @@ private struct ServiceRow: View {
         let frac = Double(minutes) / Double(grand)
         let expandable = service == .youtube
 
-        VStack(alignment: .leading, spacing: 6) {
-            // The whole header row toggles, not just the chevron.
-            Button {
-                guard expandable else { return }
-                withAnimation(.easeOut(duration: 0.15)) { store.youtubeExpanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    ServiceLogo(service: service, size: 15)
-                    Text(service.name).font(.callout.weight(.medium))
-                    Spacer(minLength: 8)
-                    Text("\(Int((frac * 100).rounded()))%")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    Text(MockData.formatMinutes(minutes))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    if expandable {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(store.youtubeExpanded ? 90 : 0))
-                    }
+        // Roomier than the 6/8 this used with a stock ProgressView: a 3pt
+        // bar gives back height the row was using, and without spending it
+        // again on spacing the service rows just pack tighter together.
+        VStack(alignment: .leading, spacing: 8) {
+            // Only YouTube has a breakdown to open, so only YouTube's header
+            // is a Button. The rest render as plain rows rather than disabled
+            // Buttons: `.disabled` dims a button's whole label, which greyed
+            // out the logo, name and totals on every service except YouTube
+            // and made them read as unavailable.
+            if expandable {
+                // The whole header row toggles, not just the chevron.
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { store.youtubeExpanded.toggle() }
+                } label: {
+                    header(frac: frac, showsChevron: true)
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+            } else {
+                header(frac: frac, showsChevron: false)
             }
-            .buttonStyle(.plain)
-            .disabled(!expandable)
 
-            ProgressView(value: frac).tint(service.color)
+            DurationBar(fraction: frac, height: BarMetrics.pane, tint: service.color)
 
             if expandable && store.youtubeExpanded {
                 youtubeBreakdown
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 11)
+    }
+
+    private func header(frac: Double, showsChevron: Bool) -> some View {
+        HStack(spacing: 8) {
+            ServiceLogo(service: service, size: 15)
+            Text(service.name).font(.callout.weight(.medium))
+            Spacer(minLength: 8)
+            Text("\(Int((frac * 100).rounded()))%")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Text(MockData.formatMinutes(minutes))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(store.youtubeExpanded ? 90 : 0))
+            }
+        }
+        .contentShape(Rectangle())
     }
 
     private var youtubeBreakdown: some View {
         // Embedded is one more bar in the same list rather than a footnote —
-        // and it only earns a row once there's more than a minute of it.
+        // and it only earns a row once there's more than a minute of it. It
+        // shares the other formats' tint too: it's still YouTube time, and
+        // its own orange read as a warning next to three red siblings. The
+        // "embedded" label carries the distinction on its own.
         let embeddedMinutes = Int(Double(minutes) * MockData.youtubeEmbeddedFrac)
 
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 9) {
             ForEach(MockData.youtubeSplit, id: \.label) { split in
                 breakdownBar(
                     label: split.label,
@@ -94,23 +111,23 @@ private struct ServiceRow: View {
                     label: "embedded",
                     minutes: embeddedMinutes,
                     frac: MockData.youtubeEmbeddedFrac,
-                    tint: .orange
+                    tint: service.color.opacity(0.6)
                 )
             }
         }
         .padding(.leading, 22)
-        .padding(.top, 2)
+        .padding(.top, 4)
     }
 
     private func breakdownBar(label: String, minutes: Int, frac: Double, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(label).font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 8)
                 Text(MockData.formatMinutes(minutes))
                     .font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            ProgressView(value: frac).tint(tint)
+            DurationBar(fraction: frac, height: BarMetrics.pane, tint: tint)
         }
     }
 }
@@ -118,11 +135,12 @@ private struct ServiceRow: View {
 private struct AdapterSection: View {
     let otherMinutes: Int
     let grand: Int
+    let barHeight: CGFloat
 
     var body: some View {
         let frac = Double(otherMinutes) / Double(grand)
 
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ServiceLogo(service: .other, size: 15)
                 Text("All other sites").font(.callout.weight(.medium))
@@ -130,10 +148,10 @@ private struct AdapterSection: View {
                 Text("\(Int((frac * 100).rounded()))%").font(.caption).foregroundStyle(.tertiary)
                 Text(MockData.formatMinutes(otherMinutes)).font(.callout).foregroundStyle(.secondary).monospacedDigit()
             }
-            ProgressView(value: frac).tint(Service.other.color)
+            DurationBar(fraction: frac, height: barHeight, tint: Service.other.color)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 11)
         Divider().padding(.horizontal, 14)
 
         ForEach(MockData.needsAdapter, id: \.name) { entry in

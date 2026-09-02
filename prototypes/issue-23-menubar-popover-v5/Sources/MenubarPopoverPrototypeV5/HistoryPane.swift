@@ -8,7 +8,7 @@ struct HistoryPane: View {
         if store.range == .today {
             return MockData.history.filter { $0.id == "today" }
         }
-        return MockData.history.filter { range.contains($0.dayOfMonth) }
+        return MockData.history.filter { range.contains($0.date) }
     }
 
     var body: some View {
@@ -17,13 +17,17 @@ struct HistoryPane: View {
             // the views are listed flat with nothing to expand.
             if store.range == .today {
                 if let day = days.first {
-                    ViewList(views: day.views)
+                    ViewList(views: day.views, barHeight: BarMetrics.history)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                 }
             } else {
                 ForEach(days) { day in
-                    HistoryDayRow(day: day, defaultExpanded: day.id != "d-mon")
+                    HistoryDayRow(
+                        day: day,
+                        defaultExpanded: day.id != "d-mon",
+                        barHeight: BarMetrics.history
+                    )
                     Divider().padding(.horizontal, 14)
                 }
             }
@@ -37,10 +41,12 @@ struct HistoryPane: View {
 // toggle.
 private struct HistoryDayRow: View {
     let day: MockHistoryDay
+    let barHeight: CGFloat
     @State private var isExpanded: Bool
 
-    init(day: MockHistoryDay, defaultExpanded: Bool) {
+    init(day: MockHistoryDay, defaultExpanded: Bool, barHeight: CGFloat) {
         self.day = day
+        self.barHeight = barHeight
         self._isExpanded = State(initialValue: defaultExpanded)
     }
 
@@ -59,8 +65,8 @@ private struct HistoryDayRow: View {
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 5) {
                             Text(day.name).font(.callout.weight(.semibold))
-                            if let date = day.date {
-                                Text(date).font(.caption).foregroundStyle(.secondary)
+                            if let dateLabel = day.dateLabel {
+                                Text(dateLabel).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         Text(day.span).font(.caption2).foregroundStyle(.tertiary)
@@ -68,7 +74,7 @@ private struct HistoryDayRow: View {
 
                     Spacer(minLength: 8)
 
-                    Text(MockData.formatMinutes(MockData.dayTotal(day.dayOfMonth)))
+                    Text(MockData.formatMinutes(MockData.dayTotal(day.date)))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -78,7 +84,7 @@ private struct HistoryDayRow: View {
             .buttonStyle(.plain)
 
             if isExpanded {
-                ViewList(views: day.views)
+                ViewList(views: day.views, barHeight: barHeight)
                     .padding(.top, 8)
                     .padding(.leading, 16)
             }
@@ -93,11 +99,17 @@ private struct HistoryDayRow: View {
 // indented them past the rows that did have one.
 private struct ViewList: View {
     let views: [MockView]
+    let barHeight: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // 13.2pt rather than the original 10pt: the thin bar below frees up
+        // less row height than the old ProgressView did, and without this
+        // the rows just sit tighter together — see prototype v6's variant E.
+        // Held constant across bar heights, since 2pt vs 3pt is a 1pt swing
+        // per row and re-tuning the gap alongside it would read as drift.
+        VStack(alignment: .leading, spacing: 13.2) {
             ForEach(views) { view in
-                ViewRow(view: view)
+                ViewRow(view: view, barHeight: barHeight)
             }
         }
     }
@@ -105,6 +117,7 @@ private struct ViewList: View {
 
 private struct ViewRow: View {
     let view: MockView
+    let barHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -151,9 +164,9 @@ private struct ViewRow: View {
             }
 
             if let coverage = view.coverage {
-                ProgressView(value: coverage)
-                    .tint(.accentColor)
+                DurationBar(fraction: coverage, height: barHeight)
                     .padding(.leading, 22)
+                    .padding(.top, 2.4) // see ViewList's spacing comment — keeps row rhythm from the old ProgressView
             } else {
                 Text("Live · no fixed length")
                     .font(.caption2)
@@ -163,3 +176,6 @@ private struct ViewRow: View {
         }
     }
 }
+
+// DurationBar and RangePreset.barHeight live in DurationBar.swift — the
+// By Service and Trends panes draw the same bar at the same height.

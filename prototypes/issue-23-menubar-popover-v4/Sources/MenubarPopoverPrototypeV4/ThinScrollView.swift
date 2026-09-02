@@ -6,11 +6,13 @@ import SwiftUI
 // against the stock ~7pt knob.
 struct ThinScrollView<Content: View>: View {
     private let content: Content
+    private let onContentHeightChange: (CGFloat) -> Void
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     @State private var scrollOffset: CGFloat = 0
 
-    init(@ViewBuilder content: () -> Content) {
+    init(onContentHeightChange: @escaping (CGFloat) -> Void = { _ in }, @ViewBuilder content: () -> Content) {
+        self.onContentHeightChange = onContentHeightChange
         self.content = content()
     }
 
@@ -34,6 +36,7 @@ struct ThinScrollView<Content: View>: View {
                             Color.clear
                                 .onAppear {
                                     contentHeight = inner.size.height
+                                    onContentHeightChange(inner.size.height)
                                     scrollOffset = -inner.frame(in: .named("thinScroll")).minY
                                 }
                                 .onChange(of: inner.frame(in: .named("thinScroll")).minY) { _, newValue in
@@ -41,6 +44,7 @@ struct ThinScrollView<Content: View>: View {
                                 }
                                 .onChange(of: inner.size.height) { _, newValue in
                                     contentHeight = newValue
+                                    onContentHeightChange(newValue)
                                 }
                         }
                     }
