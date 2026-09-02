@@ -5,6 +5,8 @@
 # Swift package build output
 app/.build/
 app/.swiftpm/
+prototypes/issue-23-menubar-popover/.build/
+prototypes/issue-23-menubar-popover/.swiftpm/
 
 # Node
 extension/node_modules/
