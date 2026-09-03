@@ -56,6 +56,26 @@ struct LoopbackServerTests {
         #expect(json["contract"] as? String == "v1")
     }
 
+    // MARK: - GET /v1/settings
+
+    @Test("GET /v1/settings requires auth and returns the persisted private-window setting")
+    func settingsRequiresAuthAndReturnsPersistedValue() throws {
+        let (service, client, store) = try Self.makeService()
+        defer { service.stop() }
+
+        let unauthorized = try client.send(method: "GET", path: "/v1/settings", includeContentLength: false)
+        #expect(unauthorized.status == 401)
+
+        let initial = try client.send(method: "GET", path: "/v1/settings", headers: bearer(service), includeContentLength: false)
+        #expect(initial.status == 200)
+        #expect(initial.json()?["capturePrivateWindows"] as? Bool == false)
+
+        try store.setCapturesPrivateWindows(true)
+        let changed = try client.send(method: "GET", path: "/v1/settings", headers: bearer(service), includeContentLength: false)
+        #expect(changed.status == 200)
+        #expect(changed.json()?["capturePrivateWindows"] as? Bool == true)
+    }
+
     // MARK: - POST /v1/flush happy path
 
     @Test("a valid heartbeat returns a well-formed Ack")

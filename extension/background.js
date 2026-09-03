@@ -15,6 +15,7 @@ import { INITIAL_STATE, reduce } from "./src/state.js";
 import { apply, buildFlush } from "./src/capture.js";
 import { prunePlan, rehydrate, staleOpenViewIds, viewKey, writesFor } from "./src/buffer.js";
 import { uuidv4 } from "./src/ids.js";
+import { capturesPrivateWindowsForHello } from "./src/settings.js";
 
 const PAIRING_KEY = "pairing";
 const STATE_KEY = "connectionState";
@@ -45,8 +46,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message?.type) {
     case "hello":
       // The page helper's handshake. Answering it means crash recovery for this
-      // browser run has already finished.
-      void currentRun().then((runId) => sendResponse({ runId, tabId: sender.tab?.id ?? 0 }));
+      // browser run has already finished. The worker also owns the private-tab
+      // decision because only its sender metadata identifies the tab as incognito.
+      void helloFor(sender).then(sendResponse);
       return true;
     case "flush":
       void flushNow().then(() => sendResponse({ ok: true }));
@@ -64,6 +66,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 function ensureSweep() {
   chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: SWEEP_MINUTES, delayInMinutes: SWEEP_MINUTES });
+}
+
+async function helloFor(sender) {
+  const [runId, settings] = await Promise.all([
+    currentRun(),
+    chrome.storage.local.get(PAIRING_KEY),
+  ]);
+  const appResponse = await privateWindowSettingFromApp(settings[PAIRING_KEY]);
+  return {
+    runId,
+    tabId: sender.tab?.id ?? 0,
+    incognito: sender.tab?.incognito === true,
+    capturePrivateWindows: capturesPrivateWindowsForHello(appResponse),
+  };
+}
+
+async function privateWindowSettingFromApp(rawPairing) {
+  if (!rawPairing) return null;
+  try {
+    const pairing = parsePairingString(rawPairing);
+    const response = await fetch(`${baseUrl(pairing)}/v1/settings`, {
+      headers: { Authorization: `Bearer ${pairing.token}` },
+    });
+    const settings = await response.json();
+    return { ok: response.ok, capturePrivateWindows: settings.capturePrivateWindows };
+  } catch {
+    return null;
+  }
 }
 
 // --- Which browser run is this --------------------------------------------------

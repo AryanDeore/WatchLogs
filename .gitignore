@@ -19,6 +19,10 @@ prototypes/issue-23-menubar-popover-v6/.build/
 prototypes/issue-23-menubar-popover-v6/.swiftpm/
 prototypes/app-logo-concepts/.build/
 prototypes/app-logo-concepts/.swiftpm/
+prototypes/app-icon-time/.build/
+prototypes/app-icon-time/.swiftpm/
+prototypes/app-icon-pulse/.build/
+prototypes/app-icon-pulse/.swiftpm/
 
 # Node
 extension/node_modules/

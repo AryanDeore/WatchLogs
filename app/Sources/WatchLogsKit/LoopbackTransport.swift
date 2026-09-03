@@ -36,6 +36,7 @@ public final class LoopbackTransport: @unchecked Sendable {
         self.server = LoopbackServer(
             config: config ?? LoopbackServer.Config(version: version),
             tokenProvider: { held.current.raw },
+            privateWindowCaptureProvider: { (try? store.capturesPrivateWindows()) ?? false },
             ingest: ingest
         )
     }
@@ -53,6 +54,23 @@ public final class LoopbackTransport: @unchecked Sendable {
 
     public func setTargetHour(_ hour: Int) throws {
         try store.setTargetHour(hour)
+    }
+
+    public func rawEventRetentionDays() throws -> Int {
+        try store.rawEventRetentionDays()
+    }
+
+    public func setRawEventRetentionDays(_ days: Int) throws {
+        try store.setRawEventRetentionDays(days)
+        _ = try store.pruneRawEvents(now: clock.now())
+    }
+
+    public func capturesPrivateWindows() throws -> Bool {
+        try store.capturesPrivateWindows()
+    }
+
+    public func setCapturesPrivateWindows(_ enabled: Bool) throws {
+        try store.setCapturesPrivateWindows(enabled)
     }
 
     /// The manual "Rebuild statistics" Settings action (ADR 0004).

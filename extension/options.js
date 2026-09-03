@@ -1,9 +1,9 @@
+
 const textarea = document.getElementById("pairing");
 const saveButton = document.getElementById("save");
 const result = document.getElementById("result");
-
-chrome.storage.local.get("pairing").then(({ pairing }) => {
-  if (pairing) textarea.value = pairing;
+chrome.storage.local.get(["pairing"]).then((items) => {
+  if (items.pairing) textarea.value = items.pairing;
 });
 
 saveButton.addEventListener("click", async () => {
