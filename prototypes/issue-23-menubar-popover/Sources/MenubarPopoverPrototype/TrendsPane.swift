@@ -1,150 +1,178 @@
+import Charts
 import SwiftUI
 
+// Swift Charts was tried here first and pulled back out for the ≤14-day
+// case: at popover width its categorical y-axis labels overlapped the bars,
+// the plot border and gridlines added clutter a 380pt panel can't afford,
+// and a "minutes" x-axis is less readable than just printing "3h 32m" at
+// the end of each row. v1's hand-rolled layout — fixed label column,
+// full-width track, value column — stayed cleaner, so it's restored here
+// with native type and colors.
+//
+// The >14-day case keeps Swift Charts: at that density individual rows stop
+// being readable anyway, and the framework's axis thinning is worth having.
 struct TrendsPane: View {
     @Bindable var store: PopoverStore
 
     var body: some View {
         let range = store.resolvedRange
-        let days = range.map(Array.init) ?? []
+        let days = range?.days ?? []
 
         VStack(alignment: .leading, spacing: 10) {
-            Text("Watched time per day · \(store.range.label) · \(MockData.rangeResolvedLabel(range))")
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
-
             if days.count <= 1 {
                 singleDayMix(day: days.first)
             } else if days.count <= 14 {
                 horizontalBars(days: days)
             } else {
-                verticalColumns(days: days)
+                verticalChart(days: days)
             }
 
             legend
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     private var legend: some View {
         HStack(spacing: 12) {
             ForEach(Service.allCases) { service in
                 HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2).fill(service.color).frame(width: 9, height: 9)
-                    Text(service.name).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    Circle().fill(service.color).frame(width: 7, height: 7)
+                    Text(service.name).font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func singleDayMix(day: Int?) -> some View {
-        Text("A single day has no trend — here's \(day == MockData.today ? "today" : "the day")'s mix:")
-            .font(.system(size: 10.5))
-            .foregroundStyle(.tertiary)
-
+    private func singleDayMix(day: MockDate?) -> some View {
         let minutes = day.flatMap { MockData.daily[$0] } ?? [:]
         let entries = Service.allCases.compactMap { s -> (Service, Int)? in
             let m = minutes[s] ?? 0
             return m > 0 ? (s, m) : nil
         }
         if entries.isEmpty {
-            Text("nothing watched yet").font(.system(size: 10.5)).foregroundStyle(.tertiary)
+            Text("Nothing watched yet").font(.caption).foregroundStyle(.tertiary)
         } else {
-            VStack(spacing: 6) {
+            let maxMinutes = entries.map(\.1).max() ?? 1
+            VStack(spacing: 9) {
                 ForEach(entries, id: \.0) { service, mins in
-                    trendRow(label: service.name, minutes: mins, maxMinutes: mins, segments: [(service, mins)])
+                    TrendRow(
+                        label: service.name,
+                        total: mins,
+                        segments: [(service, mins)],
+                        scaleMax: maxMinutes,
+                        barHeight: BarMetrics.pane
+                    )
                 }
             }
         }
     }
 
-    private func horizontalBars(days: [Int]) -> some View {
+    private func horizontalBars(days: [MockDate]) -> some View {
         let maxDay = max(days.map(MockData.dayTotal).max() ?? 1, 1)
         return VStack(alignment: .leading, spacing: 8) {
-            Text("bar length ∝ watch time · longest day = \(MockData.formatMinutes(maxDay))")
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.tertiary)
-            VStack(spacing: 6) {
+            // 9pt, not 6: the rows carry a 3pt bar now instead of a 10pt one,
+            // so the same gap left them looking stacked on top of each other.
+            VStack(spacing: 9) {
                 ForEach(days, id: \.self) { day in
-                    let total = MockData.dayTotal(day)
                     let segments = Service.allCases.compactMap { s -> (Service, Int)? in
                         let m = (MockData.daily[day] ?? [:])[s] ?? 0
                         return m > 0 ? (s, m) : nil
                     }
-                    trendRow(label: "\(MockData.weekdayName[day] ?? "Aug") \(day)", minutes: total, maxMinutes: maxDay, segments: segments)
+                    TrendRow(
+                        label: "\(day.weekdayName) \(day.day)",
+                        total: MockData.dayTotal(day),
+                        segments: segments,
+                        scaleMax: maxDay,
+                        barHeight: BarMetrics.pane
+                    )
                 }
             }
-            Text("Horizontal — \(days.count) days (≤ 14).")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.tertiary)
         }
     }
 
-    private func trendRow(label: String, minutes: Int, maxMinutes: Int, segments: [(Service, Int)]) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 52, alignment: .trailing)
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    ForEach(segments, id: \.0) { service, mins in
-                        Rectangle()
-                            .fill(service.color.opacity(0.9))
-                            .frame(width: geo.size.width * (Double(mins) / Double(maxMinutes)))
-                    }
-                }
-                .background(segments.isEmpty ? Color(nsColor: .separatorColor).opacity(0.4) : .clear)
-            }
-            .frame(height: 15)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .separatorColor).opacity(0.4)))
-            Text(minutes > 0 ? MockData.formatMinutes(minutes) : "–")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .leading)
+    private func verticalChart(days: [MockDate]) -> some View {
+        struct DataPoint: Identifiable {
+            let id = UUID()
+            let day: MockDate
+            let service: Service
+            let minutes: Int
         }
-    }
-
-    private func verticalColumns(days: [Int]) -> some View {
-        let maxDay = max(days.map(MockData.dayTotal).max() ?? 1, 1)
-        let height: CGFloat = 150
-        let dense = days.count > 20
+        let points = days.flatMap { day in
+            Service.allCases.compactMap { service -> DataPoint? in
+                let m = (MockData.daily[day] ?? [:])[service] ?? 0
+                return m > 0 ? DataPoint(day: day, service: service, minutes: m) : nil
+            }
+        }
+        let colorScale: KeyValuePairs<String, Color> = [
+            Service.youtube.name: Service.youtube.color,
+            Service.netflix.name: Service.netflix.color,
+            Service.twitch.name: Service.twitch.color,
+            Service.other.name: Service.other.color,
+        ]
         return VStack(alignment: .leading, spacing: 4) {
-            Text("top of chart = \(MockData.formatMinutes(maxDay))")
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.tertiary)
-            HStack(alignment: .bottom, spacing: dense ? 2 : 4) {
-                ForEach(days, id: \.self) { day in
-                    let minutes = MockData.daily[day] ?? [:]
-                    VStack(spacing: 0) {
-                        ForEach(Service.allCases.reversed()) { service in
-                            let m = minutes[service] ?? 0
-                            if m > 0 {
-                                Rectangle()
-                                    .fill(service.color.opacity(0.9))
-                                    .frame(height: height * (Double(m) / Double(maxDay)))
-                            }
+            Chart(points) { point in
+                BarMark(
+                    x: .value("Day", point.day.date),
+                    y: .value("Minutes", point.minutes)
+                )
+                .foregroundStyle(by: .value("Service", point.service.name))
+            }
+            .chartForegroundStyleScale(colorScale)
+            .chartLegend(.hidden)
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisValueLabel {
+                        if let minutes = value.as(Int.self) {
+                            Text("\(minutes / 60)h").font(.caption2)
                         }
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
-            .frame(height: height, alignment: .bottom)
-            .overlay(Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1), alignment: .bottom)
-            HStack(spacing: dense ? 2 : 4) {
-                ForEach(days.indices, id: \.self) { i in
-                    let day = days[i]
-                    Text(i % 5 == 0 || day == MockData.today ? "\(day)" : "")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
+            .frame(height: 160)
+        }
+    }
+}
+
+// Fixed label column · full-width stacked track · value column. The track
+// always spans the same width so days are comparable at a glance, and an
+// empty day reads as an empty track rather than a missing row.
+private struct TrendRow: View {
+    let label: String
+    let total: Int
+    let segments: [(Service, Int)]
+    let scaleMax: Int
+    let barHeight: CGFloat
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(width: 54, alignment: .trailing)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.07))
+                    HStack(spacing: 0) {
+                        ForEach(segments, id: \.0) { service, mins in
+                            Rectangle()
+                                .fill(service.color)
+                                .frame(width: geo.size.width * (Double(mins) / Double(scaleMax)))
+                        }
+                    }
+                    .clipShape(Capsule())
                 }
             }
-            Text("Vertical — \(days.count) days (> 14). One column per day, labels every 5th.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.tertiary)
+            .frame(height: barHeight)
+
+            Text(total > 0 ? MockData.formatMinutes(total) : "—")
+                .font(.caption)
+                .foregroundStyle(total > 0 ? .secondary : .tertiary)
+                .monospacedDigit()
+                .frame(width: 52, alignment: .leading)
         }
     }
 }

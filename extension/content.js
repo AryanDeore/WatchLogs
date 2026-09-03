@@ -40,6 +40,7 @@
   /** The running capture context, once a player has shown up. */
   let helper = null;
   let booting = null;
+  let captureDisabled = false;
   const queued = [];
 
   // Media events don't bubble, so each one is a capture-phase listener on the
@@ -48,7 +49,7 @@
     document.addEventListener(
       type,
       (event) => {
-        if (!(event.target instanceof HTMLMediaElement)) return;
+        if (!(event.target instanceof HTMLMediaElement) || captureDisabled) return;
         // Snapshot the facts at the moment they were true: booting is
         // asynchronous, and `currentTime` will have moved on by the time it
         // finishes.
@@ -86,6 +87,7 @@
   addEventListener("pagehide", () => helper?.endAll("nav"));
 
   function boot() {
+    if (captureDisabled) return Promise.resolve(null);
     // A failed boot resets, so the next media event tries again — the worker may
     // simply have been mid-restart.
     return (booting ??= start().catch(() => {
@@ -95,6 +97,18 @@
   }
 
   async function start() {
+    // `hello` doubles as a barrier: the worker answers only once it has closed
+    // whatever a previous browser run left open, so no View we write now can be
+    // mistaken for a crashed one. It also tells this frame whether its tab is a
+    // private window, before any capture modules or state are initialized.
+    const hello = await ask({ type: "hello" });
+    if (!hello) throw new Error("the WatchLogs worker did not answer");
+    if (hello.incognito && !hello.capturePrivateWindows) {
+      captureDisabled = true;
+      queued.length = 0;
+      return null;
+    }
+
     const load = (path) => import(chrome.runtime.getURL(path));
     const [captureModule, bufferModule, metaModule, idsModule] = await Promise.all([
       load("src/capture.js"),
@@ -102,12 +116,6 @@
       load("src/identify.js"),
       load("src/ids.js"),
     ]);
-
-    // `hello` doubles as a barrier: the worker answers only once it has closed
-    // whatever a previous browser run left open, so no View we write now can be
-    // mistaken for a crashed one.
-    const hello = await ask({ type: "hello" });
-    if (!hello) throw new Error("the WatchLogs worker did not answer");
 
     helper = makeHelper({
       capture: captureModule,

@@ -3,7 +3,8 @@ import Network
 
 /// The App's local HTTP server. Binds `127.0.0.1` on a fixed default port and
 /// rolls forward to the next free port on collision. Wire surface is exactly
-/// `GET /v1/ping` and `POST /v1/flush`, JSON only, plain HTTP (issue #26).
+/// `GET /v1/ping`, authenticated `GET /v1/settings`, and `POST /v1/flush`,
+/// JSON only, plain HTTP (issues #26 and #23).
 ///
 /// All connections share one serial dispatch queue and ingest is synchronous and
 /// lock-guarded, so there is genuinely one request in flight at a time.
@@ -30,6 +31,7 @@ public final class LoopbackServer: @unchecked Sendable {
 
     private let config: Config
     private let tokenProvider: @Sendable () -> Data
+    private let privateWindowCaptureProvider: @Sendable () -> Bool
     private let ingest: Ingest
     private let queue = DispatchQueue(label: "com.watchlogs.loopback")
 
@@ -37,9 +39,15 @@ public final class LoopbackServer: @unchecked Sendable {
     private let _boundPort = Locked<Int?>(nil)
     private let _bodyBytesRead = Locked<Int>(0)
 
-    public init(config: Config, tokenProvider: @escaping @Sendable () -> Data, ingest: Ingest) {
+    public init(
+        config: Config,
+        tokenProvider: @escaping @Sendable () -> Data,
+        privateWindowCaptureProvider: @escaping @Sendable () -> Bool = { false },
+        ingest: Ingest
+    ) {
         self.config = config
         self.tokenProvider = tokenProvider
+        self.privateWindowCaptureProvider = privateWindowCaptureProvider
         self.ingest = ingest
     }
 
@@ -162,6 +170,13 @@ public final class LoopbackServer: @unchecked Sendable {
                 "version": config.version,
                 "contract": LoopbackDefaults.contract,
             ]), on: connection)
+
+        case ("GET", "/v1/settings"):
+            guard isAuthorized(head) else {
+                respond(.json(status: 401, ["error": "unauthorized"]), on: connection)
+                return
+            }
+            respond(.json(status: 200, ["capturePrivateWindows": privateWindowCaptureProvider()]), on: connection)
 
         case ("POST", "/v1/flush"):
             guard isAuthorized(head) else {

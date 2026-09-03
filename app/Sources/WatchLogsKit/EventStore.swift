@@ -41,6 +41,9 @@ public final class EventStore: @unchecked Sendable {
         database = try SQLiteDatabase(path: path)
         self.schemaVersion = schemaVersion
         try database.execute(Self.schema)
+        // Older stores created before the private-window setting need this
+        // additive migration. Fresh stores already get the column from schema.
+        try? database.execute("ALTER TABLE app_settings ADD COLUMN capture_private_windows INTEGER NOT NULL DEFAULT 0")
     }
 
     /// `~/Library/Application Support/WatchLogs/watchlogs.sqlite`, creating the
@@ -105,6 +108,10 @@ public final class EventStore: @unchecked Sendable {
                 [.text(envelope.flushId), .int(serverTime), .text(String(decoding: ack.jsonData(), as: UTF8.self))]
             )
             try advanceOpenDay(now: Date(epochMillis: serverTime), calendar: .current)
+            // An open View must retain its complete Event log: the next Flush
+            // recomputes its Segments from that log. Closed Views are immutable,
+            // so their raw facts can age out without changing derived history.
+            _ = try pruneRawEventsRaw(now: Date(epochMillis: serverTime))
             return ack
         }
     }
@@ -128,7 +135,10 @@ public final class EventStore: @unchecked Sendable {
     /// test overrides it. Bumping this marks every existing `rolled_day` row
     /// stale, so the next read repairs it (`reconcile`) with the new
     /// computation rather than needing a migration.
-    public static let currentSchemaVersion = 1
+    ///
+    /// v2: `slicedTotals` splits a YouTube Short (`/shorts/` path) into its own
+    /// `content_format = "short"` slice instead of folding it into "standard".
+    public static let currentSchemaVersion = 2
 
     /// Watched and Background totals for `kind`, resolved against the
     /// activity-flexed Day (ADR 0001) rather than a naive calendar range.
@@ -159,6 +169,126 @@ public final class EventStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return try rawSlices(for: kind, now: now, calendar: calendar)
+    }
+
+    /// One rollup-backed stack for every Day in the resolved range. Empty Days
+    /// remain explicit entries rather than disappearing with their absent
+    /// `rollup_slice` rows, which is what makes Trends truthful.
+    public func dailySeries(for kind: DateRangeKind, now: Date, calendar: Calendar = .current) throws -> [DaySeriesEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        let openStart = try advanceOpenDay(now: now, calendar: calendar)
+        try reconcile(calendar: calendar)
+        let openLabel = DayBoundary.label(for: openStart, calendar: calendar)
+        return try resolvedDayLabels(for: kind, openLabel: openLabel, calendar: calendar).map { label in
+            let slices: [TotalsSlice]
+            if label == openLabel {
+                slices = try slicedTotals(startMs: openStart.epochMillis, endMs: now.epochMillis)
+            } else {
+                slices = try frozenSlices(forLabel: label)
+            }
+            return DaySeriesEntry(label: label, totals: Self.displayTotals(from: slices))
+        }
+    }
+
+    /// The data at the rollup grain after unadapted Services are folded into
+    /// the user-facing Other sites bucket.
+    public func displayServiceTotals(for kind: DateRangeKind, now: Date, calendar: Calendar = .current) throws -> [ServiceDisplayBucketTotal] {
+        lock.lock()
+        defer { lock.unlock() }
+        let slices = try rawSlices(for: kind, now: now, calendar: calendar)
+        var totals: [ServiceDisplayBucket: ServiceDisplayBucketTotal] = [:]
+        for slice in slices {
+            let display = ServiceDisplayBucket.from(service: slice.service)
+            var entry = totals[display] ?? ServiceDisplayBucketTotal(service: display, totals: Totals(), formats: [])
+            entry.totals.watchedMs += slice.totals.watchedMs
+            entry.totals.backgroundMs += slice.totals.backgroundMs
+            entry.formats.append(slice)
+            totals[display] = entry
+        }
+        let embeddedWatchedMs = try embeddedYouTubeWatchedMsRaw(for: kind, now: now, calendar: calendar)
+        if var youtube = totals[.youtube] {
+            youtube.embeddedWatchedMs = embeddedWatchedMs
+            totals[.youtube] = youtube
+        }
+        return totals.values.sorted { $0.totals.watchedMs > $1.totals.watchedMs }
+    }
+
+    /// Watched time from embedded YouTube Views in the resolved range. Format
+    /// rows still come from `rollup_slice`; `embedded` belongs to `views`, so
+    /// this one display detail reads the derived Segments directly.
+    public func embeddedYouTubeWatchedMs(for kind: DateRangeKind, now: Date, calendar: Calendar = .current) throws -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return try embeddedYouTubeWatchedMsRaw(for: kind, now: now, calendar: calendar)
+    }
+
+    /// The videos watched under each activity-flexed Day in the resolved range,
+    /// one row per video (not per View — every View of the same video that Day
+    /// is folded into one row). Frozen Days use their captured boundaries; the
+    /// current open Day is clipped at `now`. Coverage unions watched
+    /// media-position intervals across every folded View, so replaying the same
+    /// passage cannot exceed the known video duration.
+    public func history(for kind: DateRangeKind, now: Date, calendar: Calendar = .current) throws -> [HistoryDay] {
+        lock.lock()
+        defer { lock.unlock() }
+        let openStart = try advanceOpenDay(now: now, calendar: calendar)
+        try reconcile(calendar: calendar)
+        let openLabel = DayBoundary.label(for: openStart, calendar: calendar)
+        let days = try resolvedDayLabels(for: kind, openLabel: openLabel, calendar: calendar).compactMap { label -> HistoryDay? in
+            let bounds: (Int, Int)
+            if label == openLabel {
+                bounds = (openStart.epochMillis, now.epochMillis)
+            } else if let start = try rolledDayBoundaryMs(column: "day_start_ms", forLabel: label),
+                      let end = try rolledDayBoundaryMs(column: "day_end_ms", forLabel: label) {
+                bounds = (start, end)
+            } else {
+                return nil
+            }
+            let videos = try historyVideos(startMs: bounds.0, endMs: bounds.1, isOpenDay: label == openLabel)
+            guard !videos.isEmpty else { return nil }
+            return HistoryDay(
+                label: label,
+                watchedMs: videos.reduce(0) { $0 + $1.watchedMs },
+                isOpen: label == openLabel,
+                firstAt: videos.map(\.firstWatchedAt).min() ?? Date(epochMillis: bounds.0),
+                lastAt: videos.map(\.lastWatchedAt).max() ?? Date(epochMillis: bounds.1),
+                videos: videos
+            )
+        }
+        // Newest Day first — the open Day (or the most recent one with activity)
+        // sits at the top of the pane, matching the newest-first video order
+        // inside each Day. `resolvedDayLabels` stays oldest-first for Trends.
+        return Array(days.reversed())
+    }
+
+    /// The current open activity-flexed Day, for calendar highlighting.
+    public func activityDay(now: Date, calendar: Calendar = .current) throws -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return try advanceOpenDay(now: now, calendar: calendar)
+    }
+
+    /// The current open Day's activity-flexed label, for display.
+    public func activityDayLabel(now: Date, calendar: Calendar = .current) throws -> String {
+        let day = try activityDay(now: now, calendar: calendar)
+        return DayBoundary.label(for: day, calendar: calendar)
+    }
+
+    /// A human-readable inclusive label for the calendar/title row.
+    public func rangeLabel(for kind: DateRangeKind, now: Date, calendar: Calendar = .current) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        let openStart = try advanceOpenDay(now: now, calendar: calendar)
+        let openLabel = DayBoundary.label(for: openStart, calendar: calendar)
+        let labels = try resolvedDayLabels(for: kind, openLabel: openLabel, calendar: calendar)
+        guard let first = labels.first, let last = labels.last else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d"
+        let firstDate = try date(forLabel: first, calendar: calendar)
+        let lastDate = try date(forLabel: last, calendar: calendar)
+        return first == last ? formatter.string(from: firstDate) : "\(formatter.string(from: firstDate)) – \(formatter.string(from: lastDate))"
     }
 
     /// Watched and Background totals for the live open Day only:
@@ -212,10 +342,43 @@ public final class EventStore: @unchecked Sendable {
         )
     }
 
-    /// The manual "Rebuild statistics" Settings action (ADR 0004): drop both
-    /// rollup tables and replay the Day-boundary walk over `segments` from
-    /// scratch. Reproduces identical totals because `segments` — never the
-    /// rollup cache — is the source of truth every rollup is derived from.
+    /// Number of days raw Events are retained. The default is 90. Zero deletes
+    /// raw Events from closed Views on the next accepted Flush or settings save;
+    /// open Views keep their full log until they close so recomputation is safe.
+    /// Views, Segments, and both rollup tables are kept forever.
+    public func rawEventRetentionDays() throws -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return try rawEventRetentionDaysRaw()
+    }
+
+    public func setRawEventRetentionDays(_ days: Int) throws {
+        lock.lock(); defer { lock.unlock() }
+        try database.run("INSERT INTO app_settings (id, raw_event_retention_days) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET raw_event_retention_days = excluded.raw_event_retention_days", [.int(max(0, days))])
+    }
+
+    /// Whether the paired Extension may capture playback in private windows.
+    /// It defaults off and is read through the authenticated loopback contract.
+    public func capturesPrivateWindows() throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        var enabled = false
+        try database.query("SELECT capture_private_windows FROM app_settings WHERE id = 1") { row in enabled = row.bool(0) }
+        return enabled
+    }
+
+    public func setCapturesPrivateWindows(_ enabled: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
+        try database.run("INSERT INTO app_settings (id, capture_private_windows) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET capture_private_windows = excluded.capture_private_windows", [.bool(enabled)])
+    }
+
+    /// Delete raw Event facts older than the configured retention window. This
+    /// runs when Settings changes the window and never deletes derived or
+    /// historical tables (`segments`, `rolled_day`, `rollup_slice`).
+    @discardableResult
+    public func pruneRawEvents(now: Date) throws -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return try pruneRawEventsRaw(now: now)
+    }
+
     public func rebuildStatistics(now: Date, calendar: Calendar = .current) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -252,6 +415,24 @@ public final class EventStore: @unchecked Sendable {
         return merged.sorted { ($0.service, $0.contentFormat) < ($1.service, $1.contentFormat) }
     }
 
+    private func embeddedYouTubeWatchedMsRaw(for kind: DateRangeKind, now: Date, calendar: Calendar) throws -> Int {
+        let openStart = try advanceOpenDay(now: now, calendar: calendar)
+        try reconcile(calendar: calendar)
+        let resolved = try resolveRange(kind, openStart: openStart, calendar: calendar)
+        let endMs = resolved.includesOpenDay ? now.epochMillis : resolved.endMs
+        var watchedMs = 0
+        try database.query(
+            """
+            SELECT COALESCE(SUM(MIN(s.wall_end_ms, ?) - MAX(s.wall_start_ms, ?)), 0)
+            FROM segments s JOIN views v ON v.view_id = s.view_id
+            WHERE s.kind = 'watched' AND v.service = 'youtube' AND v.embedded = 1
+              AND s.wall_end_ms > ? AND s.wall_start_ms < ?
+            """,
+            [.int(endMs), .int(resolved.startMs), .int(resolved.startMs), .int(endMs)]
+        ) { row in watchedMs = row.int(0) }
+        return watchedMs
+    }
+
     /// Sum `a` and `b`'s contributions to each `service × contentFormat` key
     /// into one entry per key — how a frozen-Days total and the live open Day
     /// combine into one slice list rather than two rows for the same key.
@@ -276,6 +457,17 @@ public final class EventStore: @unchecked Sendable {
         "\(service)\u{0}\(contentFormat)"
     }
 
+    /// A Flush this recent means ingest is still active.
+    private static let ingestActiveWindowMs = 15_000
+    /// While ingest is active, activity this far behind `now` means a buffered
+    /// backlog (ADR 0002 at-least-once delivery) is still draining — one View
+    /// per Flush, in no useful order. Deciding a Day boundary now would lock it
+    /// against a partial view of that backlog (the bug: a Day pinned to the
+    /// bare target hour because the straddling View flushed a beat late — a
+    /// decision ADR 0001 forbids re-evaluating). A later call once the drain
+    /// catches up, or ingest goes quiet, does the freeze with everything in.
+    private static let ingestCaughtUpMs = 120_000
+
     /// Freeze every Day whose boundary `now` confirms, starting from the
     /// current open Day, and return the (possibly advanced) open Day's start.
     /// Bootstraps the very first Day at `now` if the timeline has never
@@ -291,6 +483,8 @@ public final class EventStore: @unchecked Sendable {
             try database.run("INSERT INTO open_day (id, day_start_ms) VALUES (1, ?)", [.int(start.epochMillis)])
         }
 
+        if try backlogIsDraining(now: now) { return start }
+
         let targetHour = try targetHourRaw()
         while let end = DayBoundary.confirmedEnd(
             dayStart: start,
@@ -304,6 +498,23 @@ public final class EventStore: @unchecked Sendable {
             try database.run("UPDATE open_day SET day_start_ms = ? WHERE id = 1", [.int(start.epochMillis)])
         }
         return start
+    }
+
+    /// True when a Flush landed within `ingestActiveWindowMs` of `now` yet the
+    /// newest activity on record is still more than `ingestCaughtUpMs` behind
+    /// it — a buffered backlog is mid-drain and the boundary detector would be
+    /// deciding against only part of it. Real-time playback fails the second
+    /// test (its heartbeats keep activity within seconds of `now`); a genuine
+    /// quiet spell fails the first (no Flushes arriving) — both still freeze.
+    private func backlogIsDraining(now: Date) throws -> Bool {
+        var lastFlushMs = 0
+        try database.query("SELECT COALESCE(MAX(received_at_ms), 0) FROM flushes") { row in lastFlushMs = row.int(0) }
+        guard lastFlushMs >= now.epochMillis - Self.ingestActiveWindowMs else { return false }
+
+        var newestActivityMs = 0
+        try database.query("SELECT COALESCE(MAX(wall_end_ms), 0) FROM segments") { row in newestActivityMs = row.int(0) }
+        try database.query("SELECT COALESCE(MAX(t_ms), 0) FROM raw_events") { row in newestActivityMs = max(newestActivityMs, row.int(0)) }
+        return newestActivityMs < now.epochMillis - Self.ingestCaughtUpMs
     }
 
     /// Record `[dayStart, dayEnd)`'s boundary into `rolled_day` — never
@@ -527,6 +738,71 @@ public final class EventStore: @unchecked Sendable {
     /// contained in `[startMs, endMs)`, grouped by `service × contentFormat`
     /// — never the live `segments` table, so a frozen Day's contribution
     /// cannot change after the fact.
+    private func frozenSlices(forLabel label: String) throws -> [TotalsSlice] {
+        var slices: [TotalsSlice] = []
+        try database.query(
+            """
+            SELECT service, content_format, watched_ms, background_ms
+            FROM rollup_slice
+            WHERE logical_date = ?
+              AND EXISTS (SELECT 1 FROM rolled_day WHERE logical_date = ? AND rollup_complete = 1)
+            """,
+            [.text(label), .text(label)]
+        ) { row in
+            slices.append(TotalsSlice(
+                service: row.text(0), contentFormat: row.text(1),
+                totals: Totals(watchedMs: row.int(2), backgroundMs: row.int(3))
+            ))
+        }
+        return slices
+    }
+
+    private static func displayTotals(from slices: [TotalsSlice]) -> [ServiceDisplayBucket: Totals] {
+        slices.reduce(into: [:]) { totals, slice in
+            let service = ServiceDisplayBucket.from(service: slice.service)
+            var total = totals[service] ?? Totals()
+            total.watchedMs += slice.totals.watchedMs
+            total.backgroundMs += slice.totals.backgroundMs
+            totals[service] = total
+        }
+    }
+
+    private func resolvedDayLabels(for kind: DateRangeKind, openLabel: String, calendar: Calendar) throws -> [String] {
+        let openDate = try date(forLabel: openLabel, calendar: calendar)
+        let start: Date
+        let end: Date
+        switch kind {
+        case .today:
+            start = openDate
+            end = openDate
+        case .thisWeek:
+            start = mostRecentMonday(onOrBefore: openDate, calendar: calendar)
+            end = openDate
+        case .thisMonth:
+            start = calendar.date(from: calendar.dateComponents([.year, .month], from: openDate))!
+            end = openDate
+        case .custom(let from, let through):
+            start = calendar.startOfDay(for: min(from, through))
+            end = min(calendar.startOfDay(for: max(from, through)), openDate)
+        }
+        guard start <= end else { return [] }
+        var labels: [String] = []
+        var day = start
+        while day <= end {
+            labels.append(DayBoundary.label(for: day, calendar: calendar))
+            day = calendar.date(byAdding: .day, value: 1, to: day)!
+        }
+        return labels
+    }
+
+    private func date(forLabel label: String, calendar: Calendar) throws -> Date {
+        let pieces = label.split(separator: "-").compactMap { Int($0) }
+        guard pieces.count == 3, let date = calendar.date(from: DateComponents(year: pieces[0], month: pieces[1], day: pieces[2])) else {
+            throw SQLiteError.statement("invalid Day label", sql: label)
+        }
+        return date
+    }
+
     private func frozenSlices(startMs: Int, endMs: Int) throws -> [TotalsSlice] {
         var slices: [TotalsSlice] = []
         try database.query(
@@ -594,6 +870,27 @@ public final class EventStore: @unchecked Sendable {
         return result.map(Date.init(epochMillis:))
     }
 
+    private func rawEventRetentionDaysRaw() throws -> Int {
+        var days = 90
+        try database.query("SELECT raw_event_retention_days FROM app_settings WHERE id = 1") { row in days = row.int(0) }
+        return days
+    }
+
+    private func pruneRawEventsRaw(now: Date) throws -> Int {
+        let cutoff = now.epochMillis - (try rawEventRetentionDaysRaw()) * 86_400_000
+        try database.run(
+            """
+            DELETE FROM raw_events
+            WHERE t_ms < ?
+              AND EXISTS (SELECT 1 FROM views WHERE views.view_id = raw_events.view_id AND views.open = 0)
+            """,
+            [.int(cutoff)]
+        )
+        var count = 0
+        try database.query("SELECT changes()") { row in count = row.int(0) }
+        return count
+    }
+
     private func targetHourRaw() throws -> Int {
         var hour = DayBoundary.defaultTargetHour
         try database.query("SELECT target_hour FROM day_settings WHERE id = 1") { row in
@@ -625,13 +922,23 @@ public final class EventStore: @unchecked Sendable {
     /// rollup computation sums from.
     private func slicedTotals(startMs: Int, endMs: Int) throws -> [TotalsSlice] {
         var byKey: [String: TotalsSlice] = [:]
+        // A YouTube Short is a "standard" View on a `/shorts/` path — the same
+        // read-time recovery `readTimeContentFormat` does for the History pane,
+        // pushed into SQL so it also lands in the `rollup_slice` rows this feeds
+        // (bump `currentSchemaVersion` when this rule changes).
         try database.query(
             """
-            SELECT v.service, v.content_format, s.kind, SUM(MIN(s.wall_end_ms, ?) - MAX(s.wall_start_ms, ?))
-            FROM segments s
-            JOIN views v ON v.view_id = s.view_id
-            WHERE s.wall_end_ms > ? AND s.wall_start_ms < ?
-            GROUP BY v.service, v.content_format, s.kind
+            SELECT service, content_format, kind, SUM(dur) FROM (
+              SELECT v.service AS service,
+                     CASE WHEN v.content_format = 'standard' AND instr(v.url, '/shorts/') > 0
+                          THEN 'short' ELSE v.content_format END AS content_format,
+                     s.kind AS kind,
+                     MIN(s.wall_end_ms, ?) - MAX(s.wall_start_ms, ?) AS dur
+              FROM segments s
+              JOIN views v ON v.view_id = s.view_id
+              WHERE s.wall_end_ms > ? AND s.wall_start_ms < ?
+            )
+            GROUP BY service, content_format, kind
             """,
             [.int(endMs), .int(startMs), .int(startMs), .int(endMs)]
         ) { row in
@@ -758,7 +1065,11 @@ public final class EventStore: @unchecked Sendable {
     /// the App stays idempotent — and it is what replaces an open View's
     /// `provisional` tail.
     private func recomputeSegments(viewId: String) throws {
-        let segments = SegmentComputer.segments(viewId: viewId, events: try loadEvents(viewId: viewId))
+        var isLive = false
+        try database.query("SELECT content_format FROM views WHERE view_id = ?", [.text(viewId)]) { row in
+            isLive = row.text(0) == "live"
+        }
+        let segments = SegmentComputer.segments(viewId: viewId, events: try loadEvents(viewId: viewId), isLive: isLive)
         try database.run("DELETE FROM segments WHERE view_id = ?", [.text(viewId)])
         for segment in segments {
             try database.run(
@@ -802,6 +1113,147 @@ public final class EventStore: @unchecked Sendable {
             ))
         }
         return events
+    }
+
+    /// A video watched in the open Day counts as *playing now* when its newest
+    /// watched Segment ends within this many milliseconds of `now` — one sample
+    /// beat (`content.js` SAMPLE_MS = 5s) plus room for Flush latency.
+    private static let playingGraceMs = 20_000
+
+    private func historyVideos(startMs: Int, endMs: Int, isOpenDay: Bool) throws -> [HistoryVideo] {
+        // Keyed by `display bucket \0 video id`: two Views of the same video —
+        // a re-watch, a scroll back to an earlier Short, a re-mounted player —
+        // fold into one row here. `\0` cannot appear in either field.
+        struct Group {
+            var videoId: String
+            var service: String
+            var contentFormat: String
+            var embedded: Bool
+            var title: String?
+            var author: String?
+            var url: String
+            var latestStartedAt: Int
+            var durationSec: Double?
+            var open: Bool = false
+            var watchedMs: Int = 0
+            var minWallStart: Int = .max
+            var maxWallEnd: Int = 0
+            var viewIds: Set<String> = []
+            var intervals: [(Double, Double)] = []
+        }
+        var groups: [String: Group] = [:]
+        try database.query(
+            """
+            SELECT v.view_id, v.service, v.content_format, v.embedded, v.title, v.author,
+                   v.started_at_ms, v.duration_sec, v.open, s.kind, s.wall_start_ms,
+                   s.wall_end_ms, s.pos_start, s.pos_end, v.url, v.video_id
+            FROM views v JOIN segments s ON s.view_id = v.view_id
+            WHERE s.wall_end_ms > ? AND s.wall_start_ms < ?
+            ORDER BY v.started_at_ms, s.wall_start_ms
+            """,
+            [.int(startMs), .int(endMs)]
+        ) { row in
+            let viewId = row.text(0)
+            let service = row.text(1)
+            let videoId = row.text(15)
+            let startedAt = row.int(6)
+            let key = "\(ServiceDisplayBucket.from(service: service))\u{0}\(videoId)"
+            var group = groups[key] ?? Group(
+                videoId: videoId, service: service, contentFormat: row.text(2), embedded: row.bool(3),
+                title: row.optionalText(4), author: row.optionalText(5), url: row.text(14),
+                latestStartedAt: startedAt, durationSec: row.optionalDouble(7)
+            )
+            group.viewIds.insert(viewId)
+            group.open = group.open || row.bool(8)
+            if let duration = row.optionalDouble(7) {
+                group.durationSec = max(group.durationSec ?? 0, duration)
+            }
+            // Rows arrive in non-decreasing `started_at_ms` order, so the last
+            // View seen for a video is its most recent — its metadata wins.
+            if startedAt >= group.latestStartedAt {
+                group.latestStartedAt = startedAt
+                group.service = service
+                group.contentFormat = row.text(2)
+                group.embedded = row.bool(3)
+                group.title = row.optionalText(4)
+                group.author = row.optionalText(5)
+                group.url = row.text(14)
+            }
+            guard Segment.Kind(rawValue: row.text(9)) == .watched else {
+                groups[key] = group
+                return
+            }
+            let wallStart = row.int(10)
+            let wallEnd = row.int(11)
+            let clippedStart = max(wallStart, startMs)
+            let clippedEnd = min(wallEnd, endMs)
+            group.watchedMs += clippedEnd - clippedStart
+            group.minWallStart = min(group.minWallStart, clippedStart)
+            group.maxWallEnd = max(group.maxWallEnd, clippedEnd)
+            if let start = row.optionalDouble(12), let end = row.optionalDouble(13), wallEnd > wallStart {
+                // Segments are whole in storage. When a Day cuts one, map each
+                // clipped wall-clock edge onto that Segment's media timeline.
+                let duration = Double(wallEnd - wallStart)
+                let mediaStart = start + (end - start) * Double(clippedStart - wallStart) / duration
+                let mediaEnd = start + (end - start) * Double(clippedEnd - wallStart) / duration
+                group.intervals.append((min(mediaStart, mediaEnd), max(mediaStart, mediaEnd)))
+            }
+            groups[key] = group
+        }
+        return groups.map { key, group -> HistoryVideo in
+            let coverage: Double?
+            if group.contentFormat == "live" || group.durationSec == nil || group.durationSec! <= 0 {
+                coverage = nil
+            } else {
+                let duration = group.durationSec!
+                let sorted = group.intervals.map { (max(0, $0.0), min(duration, $0.1)) }
+                    .filter { $0.0 < $0.1 }
+                    .sorted { $0.0 < $1.0 }
+                var covered = 0.0
+                var current: (Double, Double)?
+                for interval in sorted {
+                    if let existing = current {
+                        if interval.0 <= existing.1 {
+                            current = (existing.0, max(existing.1, interval.1))
+                        } else {
+                            covered += existing.1 - existing.0
+                            current = interval
+                        }
+                    } else {
+                        current = interval
+                    }
+                }
+                if let current { covered += current.1 - current.0 }
+                coverage = min(1, covered / duration)
+            }
+            let isPlaying = isOpenDay && group.open && group.maxWallEnd >= endMs - Self.playingGraceMs
+            return HistoryVideo(
+                id: key, videoId: group.videoId,
+                service: ServiceDisplayBucket.from(service: group.service), sourceService: group.service,
+                contentFormat: Self.readTimeContentFormat(stored: group.contentFormat, url: group.url),
+                embedded: group.embedded, title: group.title, author: group.author,
+                firstWatchedAt: Date(epochMillis: group.minWallStart),
+                lastWatchedAt: Date(epochMillis: group.maxWallEnd), watchedMs: group.watchedMs,
+                watchCount: group.viewIds.count, knownDurationSec: group.durationSec,
+                isOpen: group.open, isPlaying: isPlaying, coverage: coverage
+            )
+        }
+        .filter { $0.watchedMs > 0 }
+        // The video playing right now sorts to the very top; everything else by
+        // when it was last watched, newest first.
+        .sorted { lhs, rhs in
+            if lhs.isPlaying != rhs.isPlaying { return lhs.isPlaying }
+            return lhs.lastWatchedAt > rhs.lastWatchedAt
+        }
+    }
+
+    /// A YouTube Short is a View whose page path is `/shorts/<id>`. The current
+    /// Adapter-less extension slice reports every non-live View as "standard", so
+    /// the "short" format is recovered from the URL at read time — the same
+    /// read-time mapping `ServiceDisplayBucket.from` uses for the service. A
+    /// stored "live" already carries its own format and is left untouched.
+    static func readTimeContentFormat(stored: String, url: String) -> String {
+        stored == "standard" && url.contains("/shorts/") ? "short" : stored
     }
 
     private func loadSegments(viewId: String) throws -> [Segment] {
@@ -929,6 +1381,12 @@ public final class EventStore: @unchecked Sendable {
         CREATE TABLE IF NOT EXISTS day_settings (
             id          INTEGER PRIMARY KEY CHECK (id = 1),
             target_hour INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id                       INTEGER PRIMARY KEY CHECK (id = 1),
+            raw_event_retention_days INTEGER NOT NULL DEFAULT 90,
+            capture_private_windows  INTEGER NOT NULL DEFAULT 0
         );
         """
 }

@@ -43,7 +43,7 @@ public struct Totals: Equatable, Sendable {
 /// Range membership follows a Day's **label**, not its wall-clock end (ADR
 /// 0001): a Day labelled Aug 25 that ran to 05:10 on Aug 26 is in the week of
 /// Aug 25 and in August.
-public enum DateRangeKind: Equatable, Sendable {
+public enum DateRangeKind: Equatable, Hashable, Sendable {
     /// The current open Day.
     case today
     /// Monday through the open Day, of the week containing the open Day's label.

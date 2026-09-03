@@ -199,6 +199,55 @@ struct SegmentComputationTests {
         #expect(segments(log).isEmpty)
     }
 
+    /// The marimo shape: `play` landed, the log carries heartbeats (so the
+    /// player was reporting in generally), but then nothing for 74 minutes
+    /// because the Mac slept — and a `seek` finally revealed the media had
+    /// crept only from 0 s to ~8 s the whole time. That 74-minute gap is a
+    /// stall: only its media advance, plus a buffering margin, is banked.
+    @Test("a stall no heartbeat bridged is clawed back to the media advance")
+    func stallWithoutHeartbeatIsClawedBack() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.seeked(74 * 60_000, from: 7.7, to: 7.9)
+        log.sample(74 * 60_000 + 5_000, pos: 12.9)
+        log.viewEnded(74 * 60_000 + 10_000, reason: "nav", pos: 17.9)
+
+        let computed = segments(log)
+        // ~7.9 s of media advance + 60 s grace ≈ 68 s, not 74 minutes.
+        #expect(computed.first?.durationMs == 67_900)
+        #expect(computed.first?.posEnd == 7.7)
+    }
+
+    @Test("a sparse heartbeat, even minutes apart, is trusted as continuous playback")
+    func sparseHeartbeatIsTrusted() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        // One beat every 30 minutes, position never read — the rollup tests'
+        // shorthand for "played straight through". Still counts in full.
+        for beat in 1...4 {
+            log.sample(beat * 30 * 60_000, pos: 0)
+        }
+        log.viewEnded(120 * 60_000, reason: "nav", pos: 0)
+
+        #expect(segments(log).first?.durationMs == 120 * 60_000)
+    }
+
+    @Test("slow-motion playback is wall-clock time, not clawed back")
+    func slowPlaybackKeepsWallClock() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.ratechange(1_000, rate: 0.5, pos: 0.5)
+        for second in stride(from: 5_000, through: 55_000, by: 5_000) {
+            log.sample(second, pos: Double(second) / 2_000)
+        }
+        log.viewEnded(60_000, reason: "nav", pos: 30)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        // 30 s of media in 60 s of real time at 0.5× — still 60 s Watched.
+        #expect(computed[0].durationMs == 60_000)
+    }
+
     @Test("a missing hidden splits at the last confirming sample and reopens at the revealing one")
     func missingHiddenExcludesTheUncertainGap() {
         var log = EventLogBuilder()

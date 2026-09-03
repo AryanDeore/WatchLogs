@@ -21,9 +21,21 @@ public enum SegmentComputer {
     /// burst of scrubbing leaves no sliver behind (ADR 0003).
     public static let noiseFloorMs = 1000
 
-    public static func segments(viewId: String, events: [RawEvent]) -> [Segment] {
-        var machine = Machine(viewId: viewId)
-        for event in normalize(events) {
+    /// A playing player heartbeats every few seconds (`content.js` SAMPLE_MS =
+    /// 5 s). A stretch inside a Segment longer than this with **no** heartbeat
+    /// and **no** media advance is not playback — it is the Mac asleep or the
+    /// network dead — and only the media advance (plus `stallGraceMs`) is
+    /// banked for it. The real fix is the Extension noticing the missed beats;
+    /// this is the read-side backstop for logs already on disk.
+    static let maxHeartbeatGapMs = 180_000
+    /// Buffering slack credited to an unmonitored gap on top of its media advance.
+    static let stallGraceMs = 60_000
+
+    public static func segments(viewId: String, events: [RawEvent], isLive: Bool = false) -> [Segment] {
+        let normalized = normalize(events)
+        let hasHeartbeat = normalized.contains { $0.type == .sample }
+        var machine = Machine(viewId: viewId, isLive: isLive, hasHeartbeat: hasHeartbeat)
+        for event in normalized {
             machine.apply(event)
         }
         return machine.finish()
@@ -62,6 +74,23 @@ private struct Machine {
     }
 
     let viewId: String
+    let isLive: Bool
+    /// Whether this View's log carries any `sample` Events at all. Without them
+    /// there is no heartbeat cadence to measure a gap against, so the stall
+    /// backstop stays out of the way (`hardCap` / rollup tests drive exactly
+    /// this shape).
+    let hasHeartbeat: Bool
+
+    /// The last Event's instant and media position, for spotting an
+    /// unmonitored gap while a Segment is open.
+    private var lastSeenAt: Int?
+    private var lastSeenPos: Double?
+    /// The latest wall-clock instant the currently open Segment is allowed to
+    /// reach: if it spanned a long, heartbeat-free, motionless gap, it may run
+    /// only to where that gap's believable playback (media advance +
+    /// `stallGraceMs`) would have ended. `.max` means no such gap. Reset by
+    /// `close`, so the next Segment starts uncapped.
+    private var stallCeilingMs = Int.max
 
     private var playing = false
     /// A View is born from a media element in a tab the user is looking at
@@ -82,12 +111,21 @@ private struct Machine {
 
     private var viewEnded = false
 
-    init(viewId: String) { self.viewId = viewId }
+    init(viewId: String, isLive: Bool, hasHeartbeat: Bool) {
+        self.viewId = viewId
+        self.isLive = isLive
+        self.hasHeartbeat = hasHeartbeat
+    }
 
     private var foreground: Bool { visible || pip }
     private var kindNow: Segment.Kind { foreground ? .watched : .background }
 
     mutating func apply(_ event: RawEvent) {
+        accountForUnmonitoredGap(before: event)
+        defer {
+            lastSeenAt = event.t
+            if let pos = event.pos { lastSeenPos = pos }
+        }
         switch event.type {
         case .play:
             playing = true
@@ -194,6 +232,21 @@ private struct Machine {
         lastConfirmedPos = event.pos
     }
 
+    /// An open Segment that spans a long gap with no heartbeat and no media
+    /// progress was not being watched across it — the player was frozen. Bank
+    /// only the media advance plus a buffering margin; the rest is subtracted
+    /// from the Segment's end in `close`. A `sample`, however sparse, is proof
+    /// the player reported in, so a gap a sample ends is left untouched.
+    private mutating func accountForUnmonitoredGap(before event: RawEvent) {
+        guard hasHeartbeat, !isLive, open != nil, event.type != .sample,
+              let lastSeenAt, let lastSeenPos, let pos = event.pos else { return }
+        let gap = event.t - lastSeenAt
+        guard gap > SegmentComputer.maxHeartbeatGapMs else { return }
+        let mediaAdvanceMs = Int(max(0, pos - lastSeenPos) * 1000)
+        let credited = min(gap, mediaAdvanceMs + SegmentComputer.stallGraceMs)
+        stallCeilingMs = min(stallCeilingMs, lastSeenAt + credited)
+    }
+
     private mutating func start(at t: Int, pos: Double?) {
         open = OpenSegment(kind: kindNow, startMs: t, posStart: pos)
     }
@@ -201,14 +254,19 @@ private struct Machine {
     private mutating func close(at t: Int, pos: Double?, provisional: Bool = false) {
         guard let current = open else { return }
         open = nil
+        let ceiling = stallCeilingMs
+        stallCeilingMs = Int.max
+        // An inferred boundary can predate the Segment it closes (a seek, then
+        // a heartbeat revealing a stop with nothing confirmed since). That
+        // Segment is zero-length and the noise floor drops it. `ceiling` claws
+        // back any frozen-player time the Segment ran past — but never pushes
+        // its end earlier than an explicit close instant already did.
+        let rawEnd = max(current.startMs, t)
         segments.append(Segment(
             viewId: viewId,
             kind: current.kind,
             wallStartMs: current.startMs,
-            // An inferred boundary can predate the Segment it closes (a seek,
-            // then a heartbeat revealing a stop with nothing confirmed since).
-            // That Segment is zero-length and the noise floor drops it.
-            wallEndMs: max(current.startMs, t),
+            wallEndMs: max(current.startMs, min(rawEnd, ceiling)),
             posStart: current.posStart,
             posEnd: pos,
             provisional: provisional

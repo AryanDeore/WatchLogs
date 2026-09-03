@@ -1,17 +1,32 @@
-# Prototype: menubar popover in SwiftUI
+# Prototype: menubar popover — segmented-control switcher (A)
 
 Answers issue [#23](https://github.com/AryanDeore/WatchLogs/issues/23) (slice 6 of
-the [tracer-bullet build](https://github.com/AryanDeore/WatchLogs/issues/18)) on top
-of the layout pinned by `prototypes/menubar-layout/` (issue
-[#7](https://github.com/AryanDeore/WatchLogs/issues/7)).
+the [tracer-bullet build](https://github.com/AryanDeore/WatchLogs/issues/18)).
+
+This is the design that was settled on, and the only one still on disk. It got
+here in three steps: **v2** settled the *chrome* question — native macOS idioms
+over a ported web page — but left the pane switcher open; **v3** showed eight
+candidates for that switcher against a stub; this one takes **v3's variant A
+(segmented control)** and drops it into v2's real, fully-built chrome. v4 did
+the same for variant F (a sidebar rail) and lost.
+
+v1–v4 and v6 were deleted once the choice was made. They are in the history
+behind commit `85d5ba2` if the head-to-head is ever worth rerunning.
 
 ## Question
 
-The HTML prototype at `prototypes/menubar-layout/` converged on a layout (round 5).
-This prototype asks: **does that layout hold up as a real macOS `MenuBarExtra`
-popover** — native controls, SwiftUI layout quirks, actually clicking a menu-bar
-icon — or does something need to change before it's worth wiring to the real
-`totals(range, groupBy)` read model?
+Variant A is the cheapest possible answer: the stock
+`Picker(...).pickerStyle(.segmented)`. No custom drawing, so selection
+behaviour, focus ring, Dark Mode, and accessibility all come from the system.
+
+The thing to actually look at when you open it: **the range presets directly
+above are also a segmented Picker.** The panel now leads with two identical
+controls stacked one on top of the other, meaning two completely different kinds
+of thing — "which days" and "which view of those days". Is "instantly familiar
+control" worth "the same control twice"?
+
+Secondary: it's text-only, so panes read as words rather than glyphs, and it
+spends a full row of height — the axis a fixed-height popover has least of.
 
 ## Run it
 
@@ -20,53 +35,50 @@ cd prototypes/issue-23-menubar-popover
 swift run
 ```
 
-Click the eye icon that appears in the menu bar. `⌘Q` or `killall
-MenubarPopoverPrototype` to stop it — it's an unsigned, unbundled binary so it won't
-show up in the Dock.
+Look for the **stepped-bars mark** in the menu bar — concept A from
+`prototypes/app-logo-concepts/`, carried in as `MenuBarIcon.swift`. It replaced
+the old `5.circle.fill` numeral, which only existed so several prototype
+versions could sit in the menu bar at once. `Ctrl+C` or
+`killall MenubarPopoverPrototype` to stop.
 
-## What's mirrored from `prototypes/menubar-layout/`
+## What's different from v2
 
-Same single mock dataset (`MockData.daily`, in minutes per Service per day-of-month
-for a fictional August 2026, "today" = Aug 29) and the same round-5 decisions:
+`TabBar.swift`'s hand-built icon+label row is replaced by a stock segmented
+`Picker` bound to `store.pane`, at the same padding so the rest of the layout
+doesn't shift. Same 380pt width. Mock data, state model, panes, calendar,
+Settings, and the thin scrollbar started out byte-identical to v2; the Services
+pane has since diverged (see below).
 
-- Fixed 380×560 popover. Title row (`Watch·Logs · <range> · <total>`) with a gear
-  that opens Settings as a slide-over, not a tab.
-- Preset chips (Today / This Week / This Month / Custom) driving one range across
-  all three panes.
-- Calendar collapsed to a week row for every preset; only Custom expands the full
-  month grid; a manual toggle also works.
-- Summary strip: top-3 Services, click-through to By Service.
-- Tabs: History (day groups, per-View coverage bar, blank for live) / By Service
-  (part-to-whole bars, YouTube expandable to its format split, "Other sites" bucket
-  for the needs-an-Adapter domains) / Trends (horizontal bars ≤ 14 days, vertical
-  columns beyond that).
-- Viz palette departs from brand (YouTube red / Netflix amber / Twitch purple /
-  Other grey).
+Also carried over from v2: the window height is dynamic rather than a fixed
+560pt (`PopoverView.swift`, `HeightReader.swift`), sized to whatever the
+calendar and the active pane actually need, clamped to a floor and ceiling. See
+v2's README for why.
 
-## What's SwiftUI-specific
+## The Services pane
 
-- State is one `@Observable` `PopoverStore`, passed down with `@Bindable` — no
-  central `render()`/diff step like the HTML version.
-- `MenuBarExtra(_:systemImage:) { }.menuBarExtraStyle(.window)` gives a real
-  popover-like window anchored to the menu bar for free; no custom positioning code.
-- No deep links (`?pane=`/`&range=`) — not worth it for a single local run.
+The one part that was designed here rather than carried over from v2, and the
+part with rules worth keeping when this is rebuilt for real:
 
-## Findings
-
-- The layout translates cleanly: fixed-size popover, segmented tabs, part-to-whole
-  and stacked bars, and the collapsed/expanded calendar all have direct native
-  SwiftUI equivalents (`GeometryReader`-based bars, `LazyVGrid` for the month grid,
-  `.menuBarExtraStyle(.window)` for the popover chrome).
-- `Color.primary`/`.secondary`/`.tertiary` are `ShapeStyle`, not `Color` — ternaries
-  mixing them with a literal `Color` (e.g. `.white`) need an explicit `Color(...)`
-  on every branch. Minor, but shows up repeatedly across the panes.
-- Verified with `swift build` (clean) and a `swift run` smoke test (launches,
-  stays alive, no crash). Interactive/visual review of the popover itself is a
-  manual step — screenshot automation of a menu-bar-anchored window wasn't
-  attempted here.
+- **Every bar is measured from one line.** `PlotColumn` in `ByServicePane.swift`
+  fixes an icon gutter on the left and a time gutter on the right; a service's
+  own bar and its format bars are drawn against the same width, so a format's
+  length can be compared against the total it is a slice of. Before this, a
+  format that was two-thirds of YouTube drew at half of YouTube's bar, because
+  the two sat in boxes of different widths.
+- **Nesting can't break that.** Format rows step in by `PlotColumn.nest`, which
+  lands their marks under the first letter of the service's name.
+  `DurationBar.narrowerThanPlotBy` adds the indent back before measuring, so how
+  deeply a row is nested no longer changes how long its bar draws.
+- **`DurationBar.leadIn` is a deliberate hack.** A service bar paints a
+  `nest`-wide run of colour backwards out of the measured line, so it *looks*
+  like it starts under its own name. Every bar's right edge stays honest and
+  comparable; a service bar's *length* over-reads by that constant against a
+  format bar's. Read the ends, not the lengths.
+- **`FormatLogo.swift`** draws videos / shorts / live as vector marks in the
+  same 15pt slot `ServiceLogo` uses, traced from YouTube's own artwork on its
+  48x48 grid. The names survive only as hover text.
 
 ## Status
 
-Not production code, not wired to `WatchLogsKit`. If the layout holds up under
-manual review, issue #23's real implementation lives in `app/Sources/WatchLogs`
-against the actual read model.
+Not production code, not wired to `WatchLogsKit`. Kept as the reference for
+issue #23's real implementation in `app/Sources/WatchLogs`.

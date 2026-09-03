@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SummaryStrip: View {
     @Bindable var store: PopoverStore
+    @State private var hovering = false
 
     private var top3: [(service: Service, minutes: Int)] {
         guard let range = store.resolvedRange else { return [] }
@@ -16,37 +17,35 @@ struct SummaryStrip: View {
         Button {
             store.pane = .byService
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
                 if top3.isEmpty {
-                    Text("no watch time in range")
-                        .font(.system(size: 11, design: .monospaced))
+                    Text("No watch time in range")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(top3, id: \.service) { entry in
                         HStack(spacing: 5) {
-                            Text(entry.service.mono)
-                                .font(.system(size: 9, weight: .bold))
-                                .frame(width: 15, height: 15)
-                                .background(entry.service.color)
-                                .foregroundStyle(.white)
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            ServiceLogo(service: entry.service, size: 14)
                             Text(MockData.formatMinutes(entry.minutes))
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.callout)
                                 .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
                     }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .underPageBackgroundColor))
+            .background(hovering ? Color.primary.opacity(0.06) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(Divider(), alignment: .bottom)
+        .onHover { hovering = $0 }
+        .padding(.horizontal, 6)
     }
 }
