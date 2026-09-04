@@ -318,6 +318,17 @@ public final class EventStore: @unchecked Sendable {
         return try loadFrozenDays()
     }
 
+    /// When the most recent Flush landed, or `nil` if none ever has — "an
+    /// Extension is paired" for the UI (issue #35 §3's refresh button), read
+    /// straight off `flushes` rather than a separate in-memory flag.
+    public func lastFlushAt() throws -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        var ms = 0
+        try database.query("SELECT COALESCE(MAX(received_at_ms), 0) FROM flushes") { row in ms = row.int(0) }
+        return ms > 0 ? Date(epochMillis: ms) : nil
+    }
+
     /// The Day target hour (local, 0–23; default `04:00`, ADR 0001), a
     /// Settings control that takes effect for the open Day only.
     public func targetHour() throws -> Int {

@@ -104,6 +104,15 @@ public final class LoopbackTransport: @unchecked Sendable {
         PairingCodec.encode(pairing())
     }
 
+    /// Ask every paired Extension to flush whatever it has buffered right now
+    /// (issue #35 §3's refresh button), instead of waiting for its next
+    /// cadence tick. The App has no push channel to the Extension, so this
+    /// arms an "Ack-carried hint" that rides the next Flush's Ack — as fast as
+    /// that Extension's current poll, up to its 30s throttled-tab backstop.
+    public func requestFlushAgain() {
+        server.requestFlushAgain()
+    }
+
     /// Mint a new token, persist it, and make it live. Any caller still holding
     /// the previous token now fails auth. Returns the new pairing string.
     @discardableResult

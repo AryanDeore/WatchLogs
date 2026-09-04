@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 @testable import WatchLogsKit
 
@@ -96,6 +97,29 @@ struct MenubarPopoverReadModelTests {
         _ = try store.record(flush(sentAt: now.epochMillis), serverTime: now.epochMillis)
 
         #expect(try store.rangeLabel(for: .today, now: now) == "Aug 29")
+    }
+
+    @Test("markDataChanged is a tracked dependency of resolved, so SwiftUI re-renders whatever last read it")
+    func markDataChangedIsATrackedDependencyOfResolved() throws {
+        // The store isn't itself `@Observable`, so nothing about a Flush
+        // landing touches a tracked property on its own — `resolved` always
+        // answers fresh when read, but nothing tells a view it *should* read
+        // it again. `markDataChanged` exists to be that signal; this proves
+        // Observation actually wires it up rather than merely compiling.
+        let store = try EventStore(path: ":memory:")
+        let model = MenubarPopoverReadModel(store: store)
+
+        let fired = Locked<Bool>(false)
+        withObservationTracking {
+            _ = model.resolved
+        } onChange: {
+            fired.set(true)
+        }
+        #expect(fired.current == false)
+
+        model.markDataChanged()
+
+        #expect(fired.current == true)
     }
 
     // MARK: - Pane preservation across range changes

@@ -62,6 +62,11 @@ public final class LoopbackServer: @unchecked Sendable {
 
     public var maxObservedIngestConcurrency: Int { ingest.maxObservedConcurrency }
 
+    /// See `Ingest.requestFlushAgain()`.
+    public func requestFlushAgain() {
+        ingest.requestFlushAgain()
+    }
+
     public func start() throws {
         for offset in 0..<config.portRollAttempts {
             let port = config.defaultPort + offset

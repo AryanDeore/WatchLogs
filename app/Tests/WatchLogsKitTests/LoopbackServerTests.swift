@@ -258,6 +258,35 @@ struct LoopbackServerTests {
         #expect(try store.counts().flushes == 1)
     }
 
+    @Test("requestFlushAgain arms exactly the next accepted Flush's Ack, then clears itself")
+    func requestFlushAgainArmsOneAckOnly() throws {
+        // Issue #35 §3: the App has no push channel to the Extension, so the
+        // refresh button's hint has to ride the next Ack — and only that one,
+        // or the Extension would loop re-flushing forever.
+        let (service, client, _) = try Self.makeService()
+        defer { service.stop() }
+
+        let before = try client.send(
+            method: "POST", path: "/v1/flush",
+            headers: bearer(service), body: Self.heartbeatBody()
+        )
+        #expect(before.json()?["flushAgain"] == nil)
+
+        service.requestFlushAgain()
+
+        let hinted = try client.send(
+            method: "POST", path: "/v1/flush",
+            headers: bearer(service), body: Self.heartbeatBody()
+        )
+        #expect(hinted.json()?["flushAgain"] as? Bool == true)
+
+        let after = try client.send(
+            method: "POST", path: "/v1/flush",
+            headers: bearer(service), body: Self.heartbeatBody()
+        )
+        #expect(after.json()?["flushAgain"] == nil)
+    }
+
     // MARK: - Regenerate
 
     @Test("regenerate mints a new token and invalidates the old one")

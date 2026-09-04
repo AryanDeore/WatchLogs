@@ -151,6 +151,9 @@ public struct MenubarPopoverData: Equatable, Sendable {
     public var trends: [DaySeriesEntry]
     public var activityDay: Date
     public var activityDayLabel: String
+    /// When the most recent Flush landed, or `nil` if no Extension has ever
+    /// paired — what the title row's refresh button (issue #35 §3) disables on.
+    public var lastFlushAt: Date?
 }
 
 /// The public backing model for the native menubar popover. It owns typed UI
@@ -166,6 +169,16 @@ public final class MenubarPopoverReadModel {
     public var youtubeExpanded: Bool
     public var otherExpanded: Bool
     public var settingsOpen: Bool
+
+    /// Bumped by anything that means `resolved` might answer differently now
+    /// even though none of the range/pane state above changed — e.g. a
+    /// refresh confirming a Flush landed (issue #35 §3). `resolved` reads it
+    /// below purely to make the bump a tracked Observation dependency: SwiftUI
+    /// re-renders whatever last read `resolved`, the same way it already does
+    /// when `range` changes. Without this, new rows sat in the store until
+    /// the popover's own 5s timer or a pane switch happened to force a
+    /// re-render for an unrelated reason.
+    public private(set) var dataGeneration = 0
 
     private let store: EventStore
     private let clock: Clock
@@ -191,7 +204,15 @@ public final class MenubarPopoverReadModel {
         self.settingsOpen = false
     }
 
+    /// Marks that new data may be sitting in the store for a reason Observation
+    /// can't see on its own — the store isn't itself `@Observable` — so the
+    /// next read of `resolved` is worth re-rendering for.
+    public func markDataChanged() {
+        dataGeneration += 1
+    }
+
     public var resolved: MenubarPopoverData {
+        _ = dataGeneration
         let now = clock.now()
         let unscaledServices = (try? store.displayServiceTotals(for: range, now: now, calendar: calendar)) ?? []
         let total = unscaledServices.reduce(into: Totals()) { total, service in
@@ -220,7 +241,8 @@ public final class MenubarPopoverReadModel {
             history: (try? store.history(for: range, now: now, calendar: calendar)) ?? [],
             trends: trends,
             activityDay: activityDay,
-            activityDayLabel: DayBoundary.label(for: activityDay, calendar: calendar)
+            activityDayLabel: DayBoundary.label(for: activityDay, calendar: calendar),
+            lastFlushAt: try? store.lastFlushAt()
         )
     }
 
