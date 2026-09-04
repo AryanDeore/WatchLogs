@@ -72,7 +72,13 @@ one.
 | `background.js` | worker: `POST /v1/flush`, Ack → prune, 30s sweep, crash + closed-tab recovery, pairing |
 | `src/capture.js` | pure: `initSession` / `apply` / `buildFlush` — the capture seam, lifted from `prototypes/message-schema/` |
 | `src/buffer.js` | pure: the key schema above, rehydrate, prune plan |
-| `src/identify.js` | pure: Service, video id source, `embedded`, `contentFormat`, `mediaSession` metadata |
+| `src/identify.js` | pure: Service, registrable domain, video id source, `embedded`, `contentFormat`, `mediaSession` metadata |
+| `src/metadata.js` | pure: which source wins each View field — the whole precedence table, no DOM |
+| `src/adapters/router.js` | the shipped Adapter set, the host map, and binding one Adapter per frame |
+| `src/adapters/youtube.js` | watch / Shorts / live / embed; declines channels, playlists and YouTube Music |
+| `src/adapters/netflix.js` | `/watch/NNNNNNNN`, and the player's series-vs-film title block |
+| `src/adapters/generic.js` | the fallback every other site gets, and the bottom rung of every ranking |
+| `src/adapters/shared.js` | what every Adapter does the same way: first non-empty text, confidence, the title watcher |
 | `src/ids.js` | pure: uuidv4 and SHA-1, both usable on a plain `http://` page |
 | `src/pairing.js` | pure: parse / encode the base64 pairing string |
 | `src/flush.js` | pure: validate the Ack, decide accept / re-pair / retry |
@@ -115,6 +121,13 @@ bound to `127.0.0.1` — the flush never reaches, and never could corrupt,
 holds the fixture pages it plays; `test-e2e/fixtures/generate-videos.mjs`
 regenerates the checked-in video fixtures if you ever need to.
 
+`test-e2e/adapters.spec.js` is the other half: the Adapters run against saved
+copies of real Service pages in `test-e2e/pages/youtube/`, captured
+post-hydration by `test-e2e/fixtures/capture-pages.mjs` and stripped of their
+scripts. Re-capture rather than hand-edit when one goes stale. The two Netflix
+pages next door are hand-built and say so at the top — a Netflix watch page
+needs a logged-in subscriber session, so there is no URL a script can save.
+
 It's kept out of `npm test` and `test/`: it downloads a real Chromium on first
 run and takes tens of seconds to run, against the pure suite's sub-second
 budget. `test-e2e/content.spec.js` is what to read for what it actually pins —
@@ -127,13 +140,43 @@ The `chrome.*` calls in `background.js` besides the Flush (pairing, crash
 recovery, the tab sweep) still fall to manual QA — loading the unpacked
 extension against a running App, as above.
 
+## Adapters
+
+An **Adapter** is a per-Service reader: it knows where YouTube keeps the channel
+name and where Netflix keeps the episode title. The set is closed and built in
+(`src/adapters/router.js`) — adding one means editing that list and rebuilding.
+
+One Adapter is bound per frame, at the first sight of a player, and kept for the
+frame's life. Clicking through to the next Short or the next episode does not
+route again: the bound Adapter reports a new video id, and a new id ends one View
+and starts the next. A site nobody claimed — or a page the Adapter declines, like
+a YouTube channel or YouTube Music — falls through to `generic.js` and shows up
+in the App's "needs an Adapter" flag.
+
+What each source wins is `src/metadata.js`, and it is per field, not
+per record:
+
+| field | ranking |
+|---|---|
+| `videoId`, `contentFormat` | Adapter → generic *(never `mediaSession`)* |
+| `embedded` | router proposes → Adapter may correct |
+| `title` | `mediaSession` → Adapter → `og:title` → `document.title` |
+| `author` | Adapter → `mediaSession` → generic |
+| `durationSec` | Adapter → `<video>.duration` → `mediaSession` |
+
+An Adapter that finds an id but no title reports `low` confidence and drops below
+`mediaSession` for `title` and `author` — it keeps the id and the format, because
+a shaky id still beats no id. That is what makes a YouTube redesign a non-event.
+
 ## Known limits of this slice
 
-- **Every media element counts.** With no per-Service Adapter yet, a decorative
-  autoplaying `<video>` in a page banner opens a View like any other player.
-  Adapters (a later slice) are what tell a real video from page furniture.
-- **Metadata is `mediaSession` and best-effort only.** The Service is the bare
-  hostname and the video id is `sha1:` of the normalised URL.
+- **Every media element counts.** A decorative autoplaying `<video>` in a page
+  banner opens a View like any other player. An Adapter can tell a real video
+  from page furniture on the sites it knows; nothing else can.
+- **Off the two shipped Services, metadata is best-effort.** The Service is the
+  site's registrable domain and the video id is `sha1:` of the page address with
+  the query dropped — so a site keeping its id in `?v=` collapses all its videos
+  into one, which is exactly the signal that it needs an Adapter.
 - **A frame reports its own teardown as `nav`.** It can't tell a navigation from
   a closing tab on the way out. When the tab really is gone the frame usually
   dies before its write lands, and the worker's sweep reconciles the buffer

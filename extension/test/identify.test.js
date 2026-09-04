@@ -1,7 +1,6 @@
-// Generic, best-effort identification: who is the Service, which video is this,
-// is the player embedded, and what does `mediaSession` know. Per-Service
-// Adapters are a later slice — until then everything here is derived from the
-// page URL, the media element, and `mediaSession`.
+// The pure helpers behind the generic fallback: who is the Service, is the
+// player embedded, and what does `mediaSession` know. Assembling them into a
+// View header is `adapters/generic.js`, and is tested there.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -9,16 +8,13 @@ import {
   contentFormatFor,
   durationOf,
   fromMediaSession,
-  identify,
   isEmbedded,
   metadataDiff,
   normalizeUrl,
   serviceFor,
 } from "../src/identify.js";
 
-test("the Service of a site with no Adapter is its bare hostname", () => {
-  assert.equal(serviceFor("https://www.youtube.com/watch?v=abc"), "youtube.com");
-  assert.equal(serviceFor("https://cdn.example.co.uk/v/clip.mp4"), "cdn.example.co.uk");
+test("a URL that does not parse still reports a Service", () => {
   assert.equal(serviceFor("not a url"), "unknown");
 });
 
@@ -55,30 +51,11 @@ test("the id source separates two different videos on one site", () => {
   );
 });
 
-test("the wire url keeps the host as it is; only the id ignores a `www.`", () => {
-  const bare = identify({ frameUrl: "https://youtube.com/watch?v=abc" });
-  const dubdub = identify({ frameUrl: "https://www.youtube.com/watch?v=abc" });
-  assert.equal(dubdub.url, "https://www.youtube.com/watch?v=abc");
-  assert.equal(bare.videoIdSource, dubdub.videoIdSource);
-});
-
 test("the id source is order-insensitive about query params", () => {
   assert.equal(
     normalizeUrl("https://v.example/play?b=2&a=1"),
     normalizeUrl("https://v.example/play?a=1&b=2"),
   );
-});
-
-test("a page URL is not a resolvable id on its own when the media has its own source", () => {
-  const first = identify({ frameUrl: "https://blog.example/post", mediaSrc: "https://cdn.example/a.mp4" });
-  const second = identify({ frameUrl: "https://blog.example/post", mediaSrc: "https://cdn.example/b.mp4" });
-  assert.notEqual(first.videoIdSource, second.videoIdSource);
-});
-
-test("a blob or data source is not identifying, so the page URL carries the id", () => {
-  const withBlob = identify({ frameUrl: "https://v.example/watch?id=7", mediaSrc: "blob:https://v.example/9f2a" });
-  const without = identify({ frameUrl: "https://v.example/watch?id=7", mediaSrc: "" });
-  assert.equal(withBlob.videoIdSource, without.videoIdSource);
 });
 
 test("a player on the Service's own site is not embedded", () => {
@@ -122,25 +99,9 @@ test("durationSec is null unless the player really knows it", () => {
   assert.equal(durationOf(0), null);
 });
 
-test("identify assembles the View header a page helper can open on", () => {
-  const view = identify({
-    frameUrl: "https://www.youtube.com/embed/aQ8xEjc0M2k?autoplay=1",
-    topUrl: "https://someblog.example/post/hi",
-    isTopFrame: false,
-    mediaSrc: "blob:https://www.youtube.com/9f2a",
-    duration: 640,
-  });
-
-  assert.equal(view.service, "youtube.com");
-  assert.equal(view.embedded, true);
-  assert.equal(view.contentFormat, "standard");
-  assert.equal(view.durationSec, 640);
-  assert.equal(view.url, "https://www.youtube.com/embed/aQ8xEjc0M2k");
-  assert.equal(view.metadataSource, "generic");
-  assert.equal(view.adapterId, null);
-});
-
-test("mediaSession metadata becomes the View's title, author and artwork", () => {
+// Artwork is present on the metadata and dropped on the floor: #4 took the
+// thumbnail out of the schema entirely, so nothing downstream can store one.
+test("mediaSession metadata becomes the View's title and author, and no artwork", () => {
   const metadata = fromMediaSession({
     title: "Never Gonna Give You Up",
     artist: "Rick Astley",
@@ -153,7 +114,6 @@ test("mediaSession metadata becomes the View's title, author and artwork", () =>
   assert.deepEqual(metadata, {
     title: "Never Gonna Give You Up",
     author: "Rick Astley",
-    artworkUrl: "https://i.ytimg.com/vi/x/large.jpg",
   });
 });
 
@@ -163,7 +123,7 @@ test("no mediaSession metadata is no metadata, not empty strings", () => {
 });
 
 test("a metadata diff reports only what actually changed", () => {
-  const view = { title: "Loading…", author: null, artworkUrl: null, durationSec: null };
+  const view = { title: "Loading…", author: null, durationSec: null };
   assert.deepEqual(
     metadataDiff(view, { title: "Real Title", author: null, durationSec: 213 }),
     { title: "Real Title", durationSec: 213 },

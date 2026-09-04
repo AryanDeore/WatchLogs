@@ -1,0 +1,25 @@
+<!--
+  HAND-BUILT, not captured. A Netflix watch page cannot be saved the way the
+  YouTube ones next door were: it needs a logged-in subscriber session, so
+  there is no URL a capture script can reach. This reproduces the title block
+  the player draws — a heading for the show, then the episode number and the
+  episode name as two spans — and nothing else, because nothing else is read.
+
+  If the Netflix Adapter ever stops finding a title in the wild, suspect this
+  file of having drifted from the real player before you suspect the Adapter.
+-->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Stranger Things | Netflix</title></head>
+<body>
+  <div class="watch-video">
+    <video id="v" muted playsinline></video>
+    <div class="watch-video--bottom-controls-container">
+      <div class="video-title" data-uia="video-title">
+        <h4>Stranger Things</h4>
+        <div><span>E4</span><span>Chapter Four: The Sauna Test</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -15,11 +15,13 @@ import { encodePairingString } from "../src/pairing.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PAGES_DIR = path.join(here, "pages");
 const FIXTURES_DIR = path.join(here, "fixtures");
+const SRC_DIR = path.join(here, "..", "src");
 
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".webm": "video/webm",
   ".json": "application/json",
+  ".js": "text/javascript; charset=utf-8",
 };
 
 /**
@@ -52,6 +54,14 @@ export async function startStubServer() {
       // Headers only, then silence: the CDN-never-answers case that produced
       // the phantom-time bug. The response is intentionally never ended.
       res.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": 999_999_999 });
+      return;
+    }
+
+    // The Adapter modules, served from the same origin as the saved Service
+    // pages so `adapters.spec.js` can import them into one and point them at
+    // its DOM. Nothing in the extension loads them from here.
+    if (req.method === "GET" && url.pathname.startsWith("/src/")) {
+      await serveFile(res, path.join(SRC_DIR, url.pathname.slice("/src/".length)));
       return;
     }
 

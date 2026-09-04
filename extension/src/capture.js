@@ -32,7 +32,7 @@ export const SCHEMA_VERSION = 1;
 /** The View header, exactly as schema v1 puts it on the wire. */
 export const VIEW_FIELDS = [
   "viewId", "service", "contentFormat", "embedded", "videoId", "url", "title",
-  "author", "artworkUrl", "durationSec", "metadataSource", "adapterId", "tabId",
+  "author", "durationSec", "metadataSource", "adapterId", "tabId",
   "startedAt", "open", "previousViewId",
 ];
 
@@ -104,7 +104,6 @@ function newView(capture, viewId, header) {
     url: header.url,
     title: header.title ?? null,
     author: header.author ?? null,
-    artworkUrl: header.artworkUrl ?? null,
     durationSec: header.durationSec ?? null,
     metadataSource: header.metadataSource ?? null,
     adapterId: header.adapterId ?? null,

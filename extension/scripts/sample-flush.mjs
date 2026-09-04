@@ -11,20 +11,34 @@
 //
 // `test/fixture.test.js` fails if the committed file and this script disagree.
 
+import { readGeneric } from "../src/adapters/generic.js";
 import { apply, buildFlush, initCapture } from "../src/capture.js";
-import { identify } from "../src/identify.js";
 import { sha1Hex } from "../src/ids.js";
+import { merge } from "../src/metadata.js";
 
 // Fixed clock and fixed ids: a fixture has to be byte-stable.
 const T0 = 1_788_026_400_000; // 2026-08-29T18:00:00Z, the SCHEMA example's window
 const VIEW_ID = "9f2a1c04-11d2-4a55-9b3e-6c1f0e8a7d40";
 const FLUSH_ID = "f1e2d3c4-5b6a-4c7d-8e9f-0a1b2c3d4e5f";
 
-const page = identify({
-  frameUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s",
-  isTopFrame: true,
-  mediaSrc: "blob:https://www.youtube.com/9f2a1c04",
-  duration: 213,
+// A real YouTube frame, assembled the way the page helper assembles one: the
+// router binds the YouTube Adapter, the Adapter reads the id off the URL and
+// the channel name off the page, and mediaSession supplies the clean title.
+const location = { href: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s" };
+const generic = readGeneric({ location, mediaSrc: "blob:https://www.youtube.com/9f2a1c04", duration: 213 });
+
+const page = merge({
+  router: { service: "youtube", adapterId: "youtube", embedded: false },
+  adapter: {
+    videoId: "dQw4w9WgXcQ",
+    contentFormat: "standard",
+    title: "Rick Astley - Never Gonna Give You Up (Official Video)",
+    author: "Rick Astley",
+    confidence: "high",
+  },
+  session: { title: "Never Gonna Give You Up", author: "Rick Astley" },
+  element: { durationSec: 213 },
+  generic: { ...generic, videoId: `sha1:${sha1Hex(generic.videoIdSource)}` },
 });
 
 const session = initCapture(T0, { tabId: 41 });
@@ -32,7 +46,7 @@ apply(session, {
   type: "OPEN",
   at: T0,
   viewId: VIEW_ID,
-  view: { ...page, videoId: `sha1:${sha1Hex(page.videoIdSource)}` },
+  view: page,
 });
 apply(session, {
   type: "META",
