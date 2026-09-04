@@ -1,0 +1,7 @@
+# Mark test fixtures as linguist-detectable=false so they don't affect language stats
+extension/test-e2e/pages/** linguist-detectable=false
+prototypes/** linguist-documentation
+
+# Mark extension files properly
+extension/*.html linguist-language=HTML
+extension/*.js linguist-language=JavaScript
