@@ -30,12 +30,8 @@ final class AppSettings {
         }
     }
     
-    var blinkIconWhilePlaying: Bool {
-        didSet {
-            UserDefaults.standard.set(blinkIconWhilePlaying, forKey: Keys.blinkIconWhilePlaying)
-            onIconSettingsChanged?()
-        }
-    }
+    // Icon always blinks while playing (no toggle needed)
+    var blinkIconWhilePlaying: Bool { true }
     
     var blinkSeparator: Bool {
         didSet {
@@ -61,7 +57,6 @@ final class AppSettings {
             self.timeSeparator = .letter  // Default (1h05)
         }
         
-        self.blinkIconWhilePlaying = UserDefaults.standard.bool(forKey: Keys.blinkIconWhilePlaying)
         self.blinkSeparator = UserDefaults.standard.bool(forKey: Keys.blinkSeparator)
     }
     
