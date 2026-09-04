@@ -1,9 +1,10 @@
 // Generic, best-effort identification. Pure: it is handed strings and numbers
 // the page helper read off the page, never the page itself.
 //
-// This slice ships no per-Service Adapter, so a Service is a hostname and a
-// video id is a hash of the normalised URL. Every function here is the fallback
-// an Adapter will later override for the site it knows.
+// This is the no-Adapter fallback — what can be known about a video from the
+// URL and the media element alone, on a site nobody has written a reader for.
+// A per-Service Adapter overrides it field by field in `metadata.js`; where no
+// Adapter is bound, everything below is the whole answer.
 
 /** Query params that move without the video moving. */
 const NON_IDENTIFYING_PARAMS = new Set([
@@ -13,14 +14,57 @@ const NON_IDENTIFYING_PARAMS = new Set([
 ]);
 
 /**
- * The Service of a site with no Adapter: its bare hostname. `service` rides
- * the wire as a required, non-empty field, so a URL that parses but has no
- * host — `about:blank` (every `match_about_blank` iframe), `about:srcdoc`,
+ * Endings that are *not* a site on their own: `bbc.co.uk` is somebody's site,
+ * `co.uk` is not. The real answer is the Public Suffix List, ~10k entries the
+ * browsers keep internally and expose to nobody, so this is the common ~30 —
+ * enough that the By Service pane doesn't split a platform in two over a
+ * subdomain, small enough to read.
+ *
+ * Deliberately approximate. `aryan.github.io` and `someone-else.github.io`
+ * both come out as `github.io`; the accepted trade for not shipping the list.
+ */
+const MULTI_PART_ENDINGS = new Set([
+  "co.uk", "org.uk", "me.uk", "ac.uk", "gov.uk", "net.uk", "sch.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",
+  "co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp",
+  "co.nz", "net.nz", "org.nz", "govt.nz",
+  "co.za", "org.za", "web.za",
+  "com.br", "com.mx", "com.ar", "com.tr", "com.cn", "com.hk", "com.sg",
+  "com.tw", "com.pl", "com.ua", "co.in", "co.kr", "co.il",
+]);
+
+/** An IPv4 address, or the `[...]` form the URL parser gives an IPv6 host. */
+const IP_ADDRESS = /^(\[.*\]|\d+(\.\d+){3})$/;
+
+/**
+ * The site a hostname belongs to: `music.youtube.com` and `www.youtube.com` are
+ * both `youtube.com`, so one platform is one row in the By Service pane rather
+ * than one row per subdomain.
+ *
+ * Anything without at least two labels — `localhost`, an IP address — is
+ * already as short as it goes and comes back untouched.
+ */
+export function registrableDomain(hostname) {
+  const host = String(hostname ?? "");
+  // An address is not a name: `127.0.0.1` has no site to shorten it to, and
+  // trimming labels off one would report a different machine.
+  if (IP_ADDRESS.test(host)) return host;
+  const labels = host.split(".").filter(Boolean);
+  if (labels.length < 3) return labels.join(".");
+  const lastTwo = labels.slice(-2).join(".");
+  const keep = MULTI_PART_ENDINGS.has(lastTwo) ? 3 : 2;
+  return labels.slice(-keep).join(".");
+}
+
+/**
+ * The Service of a site with no Adapter: its registrable domain. `service`
+ * rides the wire as a required, non-empty field, so a URL that parses but has
+ * no host — `about:blank` (every `match_about_blank` iframe), `about:srcdoc`,
  * `file:` — falls back to "unknown" exactly like one that fails to parse.
  */
 export function serviceFor(url) {
   const parsed = parse(url);
-  const host = parsed ? stripWww(parsed.hostname) : "";
+  const host = parsed ? registrableDomain(parsed.hostname) : "";
   return host || "unknown";
 }
 
@@ -43,16 +87,27 @@ export function normalizeUrl(url, { stripHostPrefix = false } = {}) {
   return `${parsed.protocol}//${host}${path}${query ? `?${query}` : ""}`;
 }
 
-/** The string a video id is hashed from. `www.` is noise; the rest is not. */
-function idSource(url) {
-  return normalizeUrl(url, { stripHostPrefix: true });
+/**
+ * The string a generic video id is hashed from: origin and path, nothing else.
+ *
+ * Dropping the query is deliberate and has a known cost. A site that keeps its
+ * id in `?v=` collapses every one of its videos into a single id — and a site
+ * like that is exactly the one that then shows up in the app's "needs an
+ * Adapter" flag, which is how you find out it needs one. `www.` comes off so a
+ * link that has it and a link that doesn't are the same video.
+ */
+export function videoIdSourceFor(url) {
+  const parsed = parse(url);
+  if (!parsed) return String(url ?? "");
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  return `${parsed.protocol}//${stripWww(parsed.hostname)}${path}`;
 }
 
-/** A media source only identifies anything when it is a real, stable URL. */
-function identifyingSrc(mediaSrc) {
+/** A media source only tells two players apart when it is a real, stable URL. */
+export function identifyingSrc(mediaSrc) {
   const parsed = parse(mediaSrc);
   return parsed && (parsed.protocol === "http:" || parsed.protocol === "https:")
-    ? idSource(mediaSrc)
+    ? videoIdSourceFor(mediaSrc)
     : null;
 }
 
@@ -85,46 +140,18 @@ export function durationOf(duration) {
 }
 
 /**
- * Everything a View header needs that can be read without an Adapter.
+ * `navigator.mediaSession.metadata`, flattened to View header fields.
  *
- * `videoIdSource` is the string to hash into the `sha1:` video id — hashing is
- * the caller's job because it is asynchronous in a browser and this stays pure.
+ * Artwork is read and then thrown away — deliberately. The thumbnail is not
+ * captured, not stored and not on the wire (#4): no v1 pane shows it, and the
+ * only thing it would add is load time.
  */
-export function identify({ frameUrl, topUrl, isTopFrame = true, mediaSrc = "", duration = NaN }) {
-  const pageId = idSource(frameUrl);
-  const srcId = identifyingSrc(mediaSrc);
-  return {
-    service: serviceFor(frameUrl),
-    contentFormat: contentFormatFor(duration),
-    embedded: isEmbedded({ isTopFrame, frameUrl, topUrl }),
-    url: normalizeUrl(frameUrl),
-    durationSec: durationOf(duration),
-    metadataSource: "generic",
-    adapterId: null,
-    // Two players on one page are two Views, so the media's own source joins the
-    // id when it has one.
-    videoIdSource: srcId && srcId !== pageId ? `${pageId} ${srcId}` : pageId,
-  };
-}
-
-/** `navigator.mediaSession.metadata`, flattened to View header fields. */
 export function fromMediaSession(metadata) {
   if (!metadata) return {};
   const flattened = {};
   if (metadata.title) flattened.title = metadata.title;
   if (metadata.artist) flattened.author = metadata.artist;
-  const artwork = largestArtwork(metadata.artwork);
-  if (artwork) flattened.artworkUrl = artwork;
   return flattened;
-}
-
-function largestArtwork(artwork) {
-  if (!Array.isArray(artwork) || artwork.length === 0) return null;
-  const area = (entry) => {
-    const [width, height] = String(entry?.sizes ?? "").split("x").map(Number);
-    return (width || 0) * (height || 0);
-  };
-  return [...artwork].sort((a, b) => area(b) - area(a))[0]?.src ?? null;
 }
 
 /**
@@ -134,7 +161,10 @@ function largestArtwork(artwork) {
 export function metadataDiff(view, next) {
   const changed = {};
   for (const [field, value] of Object.entries(next ?? {})) {
-    if (value == null || value === "") continue;
+    // `null` is a source with nothing to say. An empty string is not: an
+    // Adapter reporting `author: ""` for a film means the film has no show
+    // name, and that is news worth recording.
+    if (value == null) continue;
     if (view[field] === value) continue;
     changed[field] = value;
   }

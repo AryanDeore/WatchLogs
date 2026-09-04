@@ -256,3 +256,124 @@ test("two players on one page are two Views, each with its own seq", { timeout: 
     await page.close();
   }
 });
+
+// --- Adapters, metadata and View boundaries (#24) ---------------------------------
+
+test(
+  "a burst of metadata changes lands as one metadataChange, and never carries a videoId",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "sample"), {
+        timeoutMs: 15_000,
+        message: "expected the View to be open and reporting",
+      });
+      const before = eventsTagged(server, tag).filter((event) => event.type === "metadataChange").length;
+
+      // The first second of a page load, in miniature: the title and the
+      // now-playing block filling in one field at a time, faster than the
+      // 500 ms wait.
+      await page.evaluate(async () => {
+        for (const step of ["Loading…", "Loading… |", "The Real Title"]) {
+          document.title = step;
+          navigator.mediaSession.metadata = new MediaMetadata({ title: step, artist: "The Author" });
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        }
+      });
+
+      await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "metadataChange").length > before,
+        { timeoutMs: 15_000, message: "expected a metadataChange after the burst" },
+      );
+      // Long enough that a second, undebounced report would have arrived and
+      // been Flushed by now.
+      await page.waitForTimeout(7000);
+
+      const reports = eventsTagged(server, tag).filter((event) => event.type === "metadataChange").slice(before);
+      assert.equal(reports.length, 1, `expected one debounced report, got ${JSON.stringify(reports)}`);
+      assert.equal(reports[0].changed.title, "The Real Title");
+      assert.equal(reports[0].changed.author, "The Author");
+      assert.equal("videoId" in reports[0].changed, false, "a new id is a View boundary, not a metadata change");
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test(
+  "a livestream turning into its own replay is a metadataChange, not a new View",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/live.html", tag));
+      await page.evaluate(() => window.wlStartBroadcast());
+
+      await waitUntil(() => viewsTagged(server, tag).some((view) => view.contentFormat === "live"), {
+        timeoutMs: 15_000,
+        message: "expected the View to open as live",
+      });
+      const liveViewId = viewsTagged(server, tag).find((view) => view.contentFormat === "live").viewId;
+
+      // The broadcast ends and the same URL becomes the replay of itself: same
+      // video, finite length now.
+      await page.evaluate(() => window.wlEndBroadcast());
+
+      await waitUntil(
+        () =>
+          eventsTagged(server, tag).some(
+            (event) => event.type === "metadataChange" && event.changed.contentFormat === "standard",
+          ),
+        { timeoutMs: 15_000, message: "expected a metadataChange carrying the new contentFormat" },
+      );
+
+      const viewIds = new Set(viewsTagged(server, tag).map((view) => view.viewId));
+      assert.deepEqual([...viewIds], [liveViewId], "the same View carries on through a format change");
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test(
+  "moving to the next video without a page load ends one View and starts the next",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "sample"), {
+        timeoutMs: 15_000,
+        message: "expected the first View to be reporting",
+      });
+      const firstViewId = viewsTagged(server, tag)[0].viewId;
+
+      // What a Short-to-Short swipe or a next-episode click looks like from
+      // here: the address changes, the page does not reload, and nothing
+      // re-routes.
+      await page.evaluate(() => history.pushState({}, "", `/player.html/next${location.search}`));
+
+      await waitUntil(() => viewsTagged(server, tag).some((view) => view.viewId !== firstViewId), {
+        timeoutMs: 20_000,
+        message: "expected a second View for the new address",
+      });
+
+      const second = viewsTagged(server, tag).find((view) => view.viewId !== firstViewId);
+      assert.equal(second.previousViewId, firstViewId, "the new View names the one it replaced");
+      assert.notEqual(second.videoId, viewsTagged(server, tag)[0].videoId);
+      const ending = eventsTagged(server, tag).find(
+        (event) => event.type === "viewEnded" && event.viewId === firstViewId,
+      );
+      assert.equal(ending.reason, "video-changed");
+    } finally {
+      await page.close();
+    }
+  },
+);

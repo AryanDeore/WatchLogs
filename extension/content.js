@@ -6,6 +6,11 @@
 // POST, the Ack and the prune — so an evicted worker costs a little latency,
 // never a lost Event.
 //
+// It binds one Adapter per frame at first sight of a player and keeps it for
+// the frame's life. Clicking through to the next Short or the next episode does
+// not route again — the bound Adapter simply reports a new video id, and a new
+// id is a View boundary.
+//
 // Nothing here interprets anything. `hidden` is recorded as `hidden`, a muted
 // PiP player is recorded exactly like any other; Segments, Background audio and
 // Watched time are the App's job.
@@ -17,6 +22,17 @@
 
 (() => {
   const SAMPLE_MS = 5000;
+
+  /**
+   * How long to wait for metadata to settle before reporting it.
+   *
+   * A page that has just swapped videos spends about a second with the new id
+   * and the old title, filling one field at a time. Every source has this
+   * flicker — the Adapter's DOM and `mediaSession` alike — so every source is
+   * reported through the same wait, and one `metadataChange` covers everything
+   * that moved.
+   */
+  const META_DEBOUNCE_MS = 500;
 
   /**
    * Media event -> what it means, in one table so the two can't drift apart.
@@ -110,18 +126,27 @@
     }
 
     const load = (path) => import(chrome.runtime.getURL(path));
-    const [captureModule, bufferModule, metaModule, idsModule] = await Promise.all([
-      load("src/capture.js"),
-      load("src/buffer.js"),
-      load("src/identify.js"),
-      load("src/ids.js"),
-    ]);
+    const [captureModule, bufferModule, metaModule, idsModule, mergeModule, routerModule, genericModule, sharedModule] =
+      await Promise.all([
+        load("src/capture.js"),
+        load("src/buffer.js"),
+        load("src/identify.js"),
+        load("src/ids.js"),
+        load("src/metadata.js"),
+        load("src/adapters/router.js"),
+        load("src/adapters/generic.js"),
+        load("src/adapters/shared.js"),
+      ]);
 
     helper = makeHelper({
       capture: captureModule,
       buffer: bufferModule,
       meta: metaModule,
       ids: idsModule,
+      merge: mergeModule.merge,
+      bindAdapter: routerModule.bindAdapter,
+      readGeneric: genericModule.readGeneric,
+      observeTitle: sharedModule.observeTitle,
       hello,
     });
     for (const fact of queued.splice(0)) helper.handle(fact);
@@ -134,7 +159,17 @@
 
   // --- The capture context ------------------------------------------------------
 
-  function makeHelper({ capture: captureModule, buffer, meta, ids, hello }) {
+  function makeHelper({
+    capture: captureModule,
+    buffer,
+    meta,
+    ids,
+    merge,
+    bindAdapter,
+    readGeneric,
+    observeTitle,
+    hello,
+  }) {
     const { apply, initCapture, isAdvancing } = captureModule;
     const runId = hello.runId;
     const capture = initCapture(Date.now(), { tabId: hello.tabId ?? 0 });
@@ -142,13 +177,26 @@
     // `visible` would look like a transition that never happened.
     capture.tabVisible = document.visibilityState === "visible";
 
-    /** media element -> { viewId, idSource, pos } */
+    // One Adapter for this frame, chosen once and kept. Routing happens here,
+    // at the first sight of a player, rather than at document load: most frames
+    // on most pages never hold one, and an ad iframe should not pay for a
+    // lookup it will never use.
+    const bound = bindAdapter({ location, document });
+
+    /** media element -> { viewId, key, pos, disambiguate } */
     const tracked = new Map();
     /** viewId -> the highest seq already on disk */
     const persisted = new Map();
     const idCache = new Map();
     let sampleTimer = null;
+    let metaTimer = null;
     let writing = Promise.resolve();
+
+    // The Adapter's own signal that the page moved under it — and, on a frame
+    // with no Adapter, the same watcher over the page title. Neither reports
+    // anything directly: both only start the wait.
+    if (bound.adapter) bound.adapter.onChange(scheduleMetadata);
+    else observeTitle(document, scheduleMetadata);
 
     return { handle, note, setVisible, endAll };
 
@@ -193,6 +241,9 @@
      * View is recovered from its last `sample` on the next browser run.
      */
     function endAll(reason) {
+      // A wait still running has its say now: what it is holding is the last
+      // thing anyone will ever learn about this View.
+      if (metaTimer !== null) reportMetadata();
       for (const [media, entry] of tracked) {
         if (!isOpen(entry.viewId)) continue;
         apply(capture, {
@@ -222,12 +273,23 @@
       const at = Date.now();
       const visible = document.visibilityState === "visible";
       for (const [media, entry] of [...tracked]) {
-        if (!isOpen(entry.viewId)) continue;
-        refresh(media, { at, pos: media.currentTime });
+        if (isOpen(entry.viewId)) refresh(media, { at, pos: media.currentTime });
+      }
+
+      // One View, one sample per beat. Two elements can share a View on a frame
+      // with an Adapter — the pre-roll ad and the video it interrupted — and
+      // sampling both would report two positions for one video, five seconds
+      // apart on the App's side. The player that is actually advancing is the
+      // one whose position means anything.
+      const sampled = new Set();
+      for (const media of advancingFirst()) {
+        const entry = tracked.get(media);
+        if (!entry || !isOpen(entry.viewId) || sampled.has(entry.viewId)) continue;
+        sampled.add(entry.viewId);
         apply(capture, {
           type: "SAMPLE",
           at,
-          viewId: tracked.get(media)?.viewId,
+          viewId: entry.viewId,
           pos: media.currentTime,
           playing: isAdvancing(media),
           visible,
@@ -237,6 +299,12 @@
       ensureTimer();
     }
 
+    /** Every tracked player, the ones actually moving first. */
+    function advancingFirst() {
+      const players = [...tracked.keys()];
+      return [...players.filter((media) => isAdvancing(media)), ...players.filter((media) => !isAdvancing(media))];
+    }
+
     // --- One media element, one View ----------------------------------------------
 
     /** The View for this element, opening one if it has none (or has out-lived it). */
@@ -244,22 +312,46 @@
       const existing = tracked.get(media);
       if (existing && isOpen(existing.viewId)) return existing;
 
-      const header = describe(media);
-      const viewId = ids.uuidv4();
-      apply(capture, { type: "OPEN", at: fact.at, viewId, view: header });
-      const entry = { viewId, idSource: header.videoIdSource, pos: fact.pos || 0 };
+      // Two players in one frame are two videos — unless an Adapter is bound,
+      // in which case they are the pre-roll ad and the video it interrupted,
+      // and the Adapter says both of them are the one video this page is
+      // showing.
+      const disambiguate = !bound.adapter && hasOpenView();
+      const header = describe(media, { disambiguate });
+
+      // On a frame with an Adapter, an element reporting a video the frame
+      // already has open joins that View rather than opening a rival one: the
+      // ad and the video it interrupts are one watch, not two. With no Adapter
+      // there is nothing that reliable to go on, so each element keeps its own
+      // View and two identical players on one page stay two Views.
+      const sharing = bound.adapter
+        ? [...tracked.values()].find((open) => open.key === header.videoId && isOpen(open.viewId))
+        : undefined;
+      const entry = {
+        viewId: sharing?.viewId ?? ids.uuidv4(),
+        key: header.videoId,
+        pos: fact.pos || 0,
+        disambiguate,
+      };
+      if (!sharing) apply(capture, { type: "OPEN", at: fact.at, viewId: entry.viewId, view: header });
       tracked.set(media, entry);
-      readMetadata(media, fact.at);
+      scheduleMetadata();
       return entry;
+    }
+
+    /** Is any element in this frame already holding a View open? */
+    function hasOpenView() {
+      for (const entry of tracked.values()) if (isOpen(entry.viewId)) return true;
+      return false;
     }
 
     /** Re-read the element: a new video id ends the View, new metadata amends it. */
     function refresh(media, fact) {
       const entry = tracked.get(media);
       if (!entry || !isOpen(entry.viewId)) return;
-      const header = describe(media);
+      const header = describe(media, entry);
 
-      if (header.videoIdSource !== entry.idSource) {
+      if (header.videoId !== entry.key) {
         const viewId = ids.uuidv4();
         apply(capture, {
           type: "CHANGE_VIDEO",
@@ -269,24 +361,47 @@
           viewId,
           view: header,
         });
-        tracked.set(media, { viewId, idSource: header.videoIdSource, pos: 0 });
+        // Every element that was on the old video moves across together, or the
+        // ad player would open a second View against the video that replaced it.
+        for (const [other, otherEntry] of [...tracked]) {
+          if (otherEntry.viewId !== entry.viewId) continue;
+          tracked.set(other, { ...otherEntry, viewId, key: header.videoId, pos: 0 });
+        }
       }
-      readMetadata(media, fact.at);
+      scheduleMetadata();
     }
 
-    /** What this frame can say about the media without an Adapter. */
-    function describe(media) {
-      const header = meta.identify({
-        frameUrl: location.href,
-        topUrl: topFrameUrl(),
-        isTopFrame: window === window.top,
+    /**
+     * Everything this frame can say about the media right now: the bound
+     * Adapter, `mediaSession`, the generic fallback and the element itself, put
+     * in their order by `metadata.js`.
+     */
+    function describe(media, { disambiguate = false } = {}) {
+      const generic = readGeneric({
+        location,
+        document,
         mediaSrc: media.currentSrc || media.src || "",
         duration: media.duration,
+        disambiguate,
       });
-      return { ...header, videoId: videoIdFor(header.videoIdSource) };
+      return merge({
+        router: {
+          service: bound.service,
+          adapterId: bound.adapterId,
+          embedded: meta.isEmbedded({
+            isTopFrame: window === window.top,
+            frameUrl: location.href,
+            topUrl: topFrameUrl(),
+          }),
+        },
+        adapter: bound.adapter?.read() ?? null,
+        session: meta.fromMediaSession(navigator.mediaSession?.metadata),
+        element: { durationSec: generic.durationSec },
+        generic: { ...generic, videoId: videoIdFor(generic.videoIdSource) },
+      });
     }
 
-    /** The generic video id: `sha1:` of the normalised URL, per the schema. */
+    /** The generic video id: `sha1:` of the page address, per the schema. */
     function videoIdFor(source) {
       if (!idCache.has(source)) idCache.set(source, `sha1:${ids.sha1Hex(source)}`);
       return idCache.get(source);
@@ -303,24 +418,52 @@
       }
     }
 
-    /** Whatever `mediaSession` and the element itself now know. */
-    function readMetadata(media, at) {
-      const entry = tracked.get(media);
-      if (!entry || !isOpen(entry.viewId)) return;
-      const view = capture.views[entry.viewId];
+    // --- Metadata, once it has stopped moving --------------------------------------
 
-      const fromSession = meta.fromMediaSession(navigator.mediaSession?.metadata);
-      const changed = meta.metadataDiff(view, {
-        ...fromSession,
-        durationSec: meta.durationOf(media.duration),
-      });
-      if (!changed) return;
+    /** Ask for a report. Every fresh ask restarts the wait. */
+    function scheduleMetadata() {
+      if (metaTimer !== null) clearTimeout(metaTimer);
+      metaTimer = setTimeout(reportMetadata, META_DEBOUNCE_MS);
+    }
 
-      // Only claim `mediaSession` as the source when it is what moved.
-      const source = Object.keys(fromSession).some((field) => field in changed)
-        ? "mediaSession"
-        : view.metadataSource;
-      apply(capture, { type: "META", at, viewId: entry.viewId, changed, metadataSource: source });
+    /**
+     * One `metadataChange` per open View, covering everything that moved.
+     *
+     * Never a video id: a new id is a View boundary and `refresh` has already
+     * dealt with it, so by the time this runs the id is either unchanged or
+     * already the new View's own. A `contentFormat` that moved on its own — a
+     * livestream turning into the replay of itself, same id — is reported here
+     * and the View carries straight on.
+     */
+    function reportMetadata() {
+      clearTimeout(metaTimer);
+      metaTimer = null;
+      const at = Date.now();
+      const reported = new Set();
+
+      for (const [media, entry] of [...tracked]) {
+        if (!isOpen(entry.viewId) || reported.has(entry.viewId)) continue;
+        reported.add(entry.viewId);
+
+        const header = describe(media, entry);
+        const changed = meta.metadataDiff(capture.views[entry.viewId], {
+          title: header.title,
+          author: header.author,
+          durationSec: header.durationSec,
+          contentFormat: header.contentFormat,
+        });
+        if (!changed) continue;
+
+        apply(capture, {
+          type: "META",
+          at,
+          viewId: entry.viewId,
+          changed,
+          metadataSource: header.metadataSource,
+          adapterId: header.adapterId,
+        });
+      }
+      persistAll();
     }
 
     // --- Applying and persisting -----------------------------------------------------
@@ -386,6 +529,8 @@
       if (!chrome.runtime?.id && sampleTimer !== null) {
         clearInterval(sampleTimer);
         sampleTimer = null;
+        clearTimeout(metaTimer);
+        metaTimer = null;
       }
     }
   }

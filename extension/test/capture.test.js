@@ -292,7 +292,7 @@ test("buildFlush produces a schema-v1 envelope carrying the View header", () => 
   assert.deepEqual(body.agent, agent);
   assert.equal(body.views.length, 1);
   assert.deepEqual(Object.keys(body.views[0]).sort(), [
-    "adapterId", "artworkUrl", "author", "contentFormat", "durationSec", "embedded",
+    "adapterId", "author", "contentFormat", "durationSec", "embedded",
     "events", "metadataSource", "open", "previousViewId", "service", "startedAt",
     "tabId", "title", "url", "videoId", "viewId",
   ]);

@@ -20,7 +20,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/*.js"],
+      "resources": ["src/*.js", "src/adapters/*.js"],
       "matches": ["<all_urls>"]
     }
   ],

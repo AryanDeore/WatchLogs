@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>live</title></head>
+<body>
+<!-- A broadcast, then the replay of itself. `wlStartBroadcast` feeds the same
+     hand-appended segments the stall page uses into a MediaSource whose
+     duration is +Infinity — which is exactly what a real livestream looks like
+     to a `<video>`, and what makes the fallback call it `live`.
+     `wlEndBroadcast` closes the stream, so the length becomes finite and the
+     same URL is now a VOD: same video, different content format. -->
+<video id="v" muted playsinline></video>
+<script>
+  let mediaSource;
+
+  function toBytes(base64) {
+    return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  }
+
+  function appendChunk(buffer, bytes) {
+    return new Promise((resolve, reject) => {
+      buffer.addEventListener("updateend", resolve, { once: true });
+      buffer.addEventListener("error", reject, { once: true });
+      buffer.appendBuffer(bytes);
+    });
+  }
+
+  window.wlStartBroadcast = async () => {
+    const chunks = (await (await fetch("/fixtures/stall-chunks.json")).json()).map(toBytes);
+
+    const video = document.getElementById("v");
+    mediaSource = new MediaSource();
+    video.src = URL.createObjectURL(mediaSource);
+    await new Promise((resolve) => mediaSource.addEventListener("sourceopen", resolve, { once: true }));
+    const sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs="vp8"');
+    for (const bytes of chunks) await appendChunk(sourceBuffer, bytes);
+    mediaSource.duration = Infinity;
+    await video.play();
+  };
+
+  window.wlEndBroadcast = () => mediaSource.endOfStream();
+</script>
+</body>
+</html>

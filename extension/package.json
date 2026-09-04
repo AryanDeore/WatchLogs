@@ -6,7 +6,7 @@
   "description": "Tracer-bullet Chromium extension for WatchLogs issue #26.",
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "test:e2e": "node --test --test-timeout=60000 test-e2e/content.spec.js",
+    "test:e2e": "node --test --test-timeout=60000 test-e2e/content.spec.js test-e2e/adapters.spec.js",
     "pretest:e2e": "playwright install chromium"
   },
   "devDependencies": {

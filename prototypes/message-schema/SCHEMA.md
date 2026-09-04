@@ -39,7 +39,6 @@ was just backgrounded, and had its speed bumped to 2×.
       "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       "title": "Never Gonna Give You Up",
       "author": "Rick Astley",
-      "artworkUrl": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
       "durationSec": 213,
       "metadataSource": "adapter",
       "adapterId": "youtube",
@@ -51,7 +50,6 @@ was just backgrounded, and had its speed bumped to 2×.
         { "seq": 1, "type": "mediaFound",     "t": 1788026400000, "pos": 0 },
         { "seq": 2, "type": "metadataChange", "t": 1788026400500, "pos": 0,
           "changed": { "title": "Never Gonna Give You Up", "author": "Rick Astley",
-                       "artworkUrl": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
                        "durationSec": 213 } },
         { "seq": 3, "type": "play",    "t": 1788026401000, "pos": 0 },
         { "seq": 4, "type": "sample",  "t": 1788026406000, "pos": 5.0,  "playing": true, "visible": true },
@@ -70,7 +68,6 @@ was just backgrounded, and had its speed bumped to 2×.
       "url": "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
       "title": "Luis Fonsi - Despacito ft. Daddy Yankee",
       "author": "Luis Fonsi",
-      "artworkUrl": "https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
       "durationSec": 282,
       "metadataSource": "adapter",
       "adapterId": "youtube",
@@ -130,17 +127,16 @@ stored Ack and ignores the duplicate Events.
 | Field | Type | Req | Notes |
 |---|---|---|---|
 | `viewId` | string (uuidv4) | yes | Minted by the Extension when the View starts. Stable across Flushes — the App's correlation + idempotency key. |
-| `service` | string | yes | Adapter Service id (`youtube`, `netflix`) or, with no Adapter, the bare hostname. |
+| `service` | string | yes | Adapter Service id (`youtube`, `netflix`) or, with no Adapter, the site's registrable domain (`www.bbc.co.uk` → `bbc.co.uk`). |
 | `contentFormat` | enum | yes | `short` \| `standard` \| `live`. Best guess at start; a later correction is a `metadataChange`. |
 | `embedded` | bool | yes | true when the player is on a third-party page, not the Service's own site. |
-| `videoId` | string | yes | Service-native id. For a no-Adapter site, `sha1:` of the normalised URL. |
+| `videoId` | string | yes | Service-native id. For a no-Adapter site, `sha1:` of the page address with the query and fragment dropped. |
 | `url` | string | yes | Page URL, query stripped except Service-significant params (e.g. YouTube `v`). |
 | `title` | string \| null | no | null until metadata resolves. Header always holds the latest known value. |
 | `author` | string \| null | no | Channel / uploader / studio. |
-| `artworkUrl` | string \| null | no | Thumbnail / poster. |
 | `durationSec` | number \| null | no | Float seconds. null for live or not-yet-known. |
-| `metadataSource` | enum \| null | no | `mediaSession` \| `adapter` \| `generic`. null before any metadata. |
-| `adapterId` | string \| null | no | Which Adapter produced metadata; null when `generic`. |
+| `metadataSource` | enum \| null | no | Where the **title** came from, and only the title: `mediaSession` \| `adapter` \| `generic` (og:title) \| `documentTitle`. null before any metadata. |
+| `adapterId` | string \| null | no | Which Adapter was bound to the frame, whatever it went on to win; null when no Adapter matched. |
 | `tabId` | int | yes | Browser tab id. Not unique over time — `viewId` is the stable key. |
 | `startedAt` | int (epoch ms) | yes | Wall clock of the first `mediaFound`. |
 | `open` | bool | yes | Convenience mirror: `false` ⟺ this batch carries the View's `viewEnded`. Kept so the App has one unambiguous liveness flag without scanning events. |
