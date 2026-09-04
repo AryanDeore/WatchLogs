@@ -37,46 +37,59 @@ struct SettingsView: View {
 
             Divider()
 
-            Form {
-                Section("Menubar Icon") {
-                        Picker("What shows", selection: Binding(
-                            get: { settings.iconDisplay },
-                            set: { settings.iconDisplay = $0 }
-                        )) {
-                            ForEach(AppSettings.IconDisplay.allCases, id: \.self) { display in
-                                Text(display.label).tag(display)
-                            }
-                        }
-                        .help("Choose what appears in the menubar.")
-                        
-                        if settings.iconDisplay != .iconOnly {
-                            Picker("Time separator", selection: Binding(
-                                get: { settings.timeSeparator },
-                                set: { settings.timeSeparator = $0 }
+            ScrollView {
+                VStack(spacing: 0) {
+                    Form {
+                        Section("Menubar Icon") {
+                            Picker("What shows", selection: Binding(
+                                get: { settings.iconDisplay },
+                                set: { settings.iconDisplay = $0 }
                             )) {
-                                ForEach(AppSettings.TimeSeparator.allCases, id: \.self) { separator in
-                                    Text(separator.label).tag(separator)
+                                ForEach(AppSettings.IconDisplay.allCases, id: \.self) { display in
+                                    Text(display.label).tag(display)
                                 }
                             }
-                            .help("Format for time over one hour.")
-                        }
-                        
-                        Toggle("Blink the icon while a video is playing", isOn: Binding(
-                            get: { settings.blinkIconWhilePlaying },
-                            set: { settings.blinkIconWhilePlaying = $0 }
-                        ))
-                        .help("The play mark pulses while actively watching.")
-                        
-                        if settings.iconDisplay == .iconAndTime && settings.timeSeparator == .colon {
-                            Toggle("Blink the separator", isOn: Binding(
-                                get: { settings.blinkSeparator },
-                                set: { settings.blinkSeparator = $0 }
+                            .help("Choose what appears in the menubar.")
+                            
+                            if settings.iconDisplay != .iconOnly {
+                                Picker("Time separator", selection: Binding(
+                                    get: { settings.timeSeparator },
+                                    set: { settings.timeSeparator = $0 }
+                                )) {
+                                    ForEach(AppSettings.TimeSeparator.allCases, id: \.self) { separator in
+                                        Text(separator.label).tag(separator)
+                                    }
+                                }
+                                .help("Format for time over one hour.")
+                            }
+                            
+                            Text("Blinking")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 8)
+                            
+                            Toggle("Icon", isOn: Binding(
+                                get: { settings.blinkIconWhilePlaying },
+                                set: { settings.blinkIconWhilePlaying = $0 }
                             ))
-                            .help("The colon blinks at 1 Hz while counting.")
+                            .help("The play mark pulses while actively watching.")
+                            
+                            if settings.iconDisplay == .iconAndTime && settings.timeSeparator == .colon {
+                                Toggle("Separator", isOn: Binding(
+                                    get: { settings.blinkSeparator },
+                                    set: { settings.blinkSeparator = $0 }
+                                ))
+                                .help("The colon blinks at 1 Hz while counting.")
+                            }
                         }
-                }
-                
-                Section("General") {
+                        .padding(.bottom, -6)
+                        
+                        Section("General") {
+                            VStack {}.frame(height: 0)
+                        }
+                        .padding(.bottom, -6)
+                        
+                        Section {
                     Toggle("Launch WatchLogs at login", isOn: $launchAtLogin)
                         .onChange(of: launchAtLogin) { _, enabled in
                             try? launchAtLoginManager.setEnabled(enabled)
@@ -102,9 +115,15 @@ struct SettingsView: View {
                         .onChange(of: privateWindows) { _, value in
                             try? transport.setCapturesPrivateWindows(value)
                         }
-                }
-                
-                Section("Extension") {
+                        }
+                        .padding(.bottom, -6)
+                        
+                        Section("Extension") {
+                            VStack {}.frame(height: 0)
+                        }
+                        .padding(.bottom, -6)
+                        
+                        Section {
                     LabeledContent("Pairing string") {
                         HStack(spacing: 6) {
                             Text(pairingString)
@@ -122,16 +141,24 @@ struct SettingsView: View {
 
                     LabeledContent("Local port", value: "\(boundPort)")
                         .help("The App listens on 127.0.0.1. Re-rolls if the port is taken.")
-                }
-
-                Section {
-                    Button("Quit WatchLogs") {
-                        NSApp.terminate(nil)
+                        }
                     }
+                    .formStyle(.grouped)
+                    .scrollContentBackground(.hidden)
+                    
+                    // Quit button outside Form
+                    HStack {
+                        Spacer()
+                        Button("Quit WatchLogs") {
+                            NSApp.terminate(nil)
+                        }
+                        .buttonStyle(HoverButtonStyle())
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
                 }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
             
             Divider()
             
@@ -167,6 +194,17 @@ struct SettingsView: View {
         privateWindows = (try? transport.capturesPrivateWindows()) ?? false
         launchAtLogin = launchAtLoginManager.isEnabled
     }
-    
+}
 
+/// Button style that shows blue on hover
+struct HoverButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(isHovered ? .blue : .primary)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
 }
