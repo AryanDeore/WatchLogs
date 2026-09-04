@@ -53,11 +53,6 @@ struct SettingsView: View {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(pairingString, forType: .string)
                                 }
-                                Button("Regenerate") {
-                                    if let regenerated = try? transport.regenerateToken() {
-                                        pairingString = regenerated
-                                    }
-                                }
                             }
                         }
                         .help("Paste into the Extension once. Host, port, token.")
@@ -123,7 +118,7 @@ struct SettingsView: View {
                         ))
                         .help("The play mark pulses while actively watching.")
                         
-                        if settings.iconDisplay != .iconOnly && settings.timeSeparator == .colon {
+                        if settings.iconDisplay == .iconAndTime && settings.timeSeparator == .colon {
                             Toggle("Blink the separator", isOn: Binding(
                                 get: { settings.blinkSeparator },
                                 set: { settings.blinkSeparator = $0 }
@@ -209,7 +204,9 @@ struct SettingsView: View {
     }
     
     private func hasPairedExtension() -> Bool {
-        // If the pairing string is non-empty, an extension can potentially be paired
+        // TODO: Query transport for active extensions via last flush timestamp
+        // For now, just check if a pairing string exists (conservative: enables
+        // refresh once the string is available, even if no extension has paired yet)
         !pairingString.isEmpty
     }
     
