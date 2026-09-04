@@ -143,17 +143,19 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             
-            // Quit button outside Form
+            Spacer()
+            
+            // Quit button
             HStack {
                 Spacer()
                 Button("Quit WatchLogs") {
                     NSApp.terminate(nil)
                 }
-                .buttonStyle(HoverButtonStyle())
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, 12)
             
             Divider()
             
@@ -188,19 +190,6 @@ struct SettingsView: View {
         retentionDays = (try? transport.rawEventRetentionDays()) ?? 90
         privateWindows = (try? transport.capturesPrivateWindows()) ?? false
         launchAtLogin = launchAtLoginManager.isEnabled
-    }
-}
-
-/// Button style that shows blue on hover
-struct HoverButtonStyle: ButtonStyle {
-    @State private var isHovered = false
-    
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundColor(isHovered ? .blue : .primary)
-            .onHover { hovering in
-                isHovered = hovering
-            }
     }
 }
 
