@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>ad slot</title></head>
+<body>
+<!-- Two players share a frame (so the second is disambiguated from the
+     first), and each swaps its own `src` to a fresh cache-busted URL and
+     replays on every `ended` — the shape a real ad slot leaves behind when
+     its network rotates in the next creative on every loop. -->
+<video id="v1" src="/fixtures/short.webm" muted playsinline></video>
+<video id="v2" src="/fixtures/short.webm" muted playsinline></video>
+<script>
+  function rotate(id) {
+    const el = document.getElementById(id);
+    el.addEventListener("ended", () => {
+      el.src = `/fixtures/short.webm?creative=${Math.random().toString(36).slice(2)}`;
+      el.load();
+      el.play();
+    });
+  }
+  rotate("v1");
+  rotate("v2");
+</script>
+</body>
+</html>

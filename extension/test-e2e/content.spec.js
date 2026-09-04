@@ -257,6 +257,57 @@ test("two players on one page are two Views, each with its own seq", { timeout: 
   }
 });
 
+test(
+  "an ad slot that swaps its source on every loop stays one View, not one per loop",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/ad-slot.html", tag));
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll("video")) {
+          el.playbackRate = 8; // an 8 s clip loops in ~1 s so the test stays fast
+          el.play();
+        }
+      });
+
+      await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "ended").length >= 4,
+        { timeoutMs: 25_000, message: "expected at least two loops on each of the two players" },
+      );
+
+      const events = eventsTagged(server, tag);
+      assert.ok(
+        !events.some((event) => event.type === "viewEnded"),
+        "a loop that only swapped its source should never close a View",
+      );
+
+      const viewIds = new Set(viewsTagged(server, tag).map((view) => view.viewId));
+      assert.equal(viewIds.size, 2, `expected exactly one View per player across every loop, got ${viewIds.size}`);
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test("a 1x1 video that actually plays yields no View at all", { timeout: 30_000 }, async () => {
+  const tag = uniqueTag();
+  const page = await ext.context.newPage();
+  try {
+    await page.goto(taggedUrl(server, "/pixel.html", tag));
+    await page.evaluate(() => document.getElementById("v").play());
+
+    // Long enough to have cleared a sample beat and opened a View, if it were
+    // going to — the same margin the positive-control test at the top waits on.
+    await page.waitForTimeout(6000);
+
+    assert.equal(viewsTagged(server, tag).length, 0, "a 1x1 video should never open a View");
+  } finally {
+    await page.close();
+  }
+});
+
 // --- Adapters, metadata and View boundaries (#24) ---------------------------------
 
 test(

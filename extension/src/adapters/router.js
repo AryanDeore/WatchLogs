@@ -8,10 +8,17 @@
 // `a.b.example.com`, `b.example.com`, `example.com` — taking the first hit. The
 // cost is the number of labels in a hostname, never the number of Adapters.
 //
-// The result is bound to the frame for its lifetime. Clicking through to the
-// next Short or the next episode does not route again: the bound Adapter simply
-// reports a new `videoId`, which the helper turns into the end of one View and
-// the start of the next. A forty-Short binge costs one lookup.
+// This function is stateless — it re-derives the answer from `location` and
+// `document` on every call, and normally that happens once, at first sight of
+// a player: clicking through to the next Short or the next episode doesn't
+// call it again, since the same Adapter still claims the page and simply
+// reports a new `videoId`. The exception is a site with a client-side router
+// of its own (YouTube): a page that starts on a video-less URL (the home
+// feed, a search) is correctly declined here, but the site can then swap in a
+// real video without ever reloading the page, so the caller (`content.js`)
+// listens for that site's own navigation signal and calls this again when it
+// fires. A forty-Short binge, or an hour on the home feed with one video
+// finally clicked, both still cost one lookup each.
 
 import { serviceFor } from "../identify.js";
 import { NetflixAdapter } from "./netflix.js";

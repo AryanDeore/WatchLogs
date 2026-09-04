@@ -379,6 +379,75 @@ struct MenubarPopoverReadModelTests {
         #expect(videos.first { $0.videoId == "v" }?.contentFormat == "standard")
     }
 
+    @Test("History recovers a generic-fallback View's real YouTube id from its URL, folding it with an Adapter-identified continuation of the same watch")
+    func historyRecoversYouTubeVideoIdAndFoldsWithAdaptedContinuation() throws {
+        let start = local(2024, 1, 1, 12).epochMillis
+        let store = try EventStore(path: ":memory:")
+        _ = try store.record(flush(sentAt: start - 1, views: []), serverTime: start - 1)
+        // The shape a video takes in the few seconds before its tab's Adapter
+        // rebinds (issue: SPA navigation to a watch page): the generic
+        // fallback's page-address hash, on a View whose own `url` already
+        // names the real video.
+        let beforeRebind = FlushView(
+            viewId: "before", service: "youtube.com", videoId: "sha1:deadbeef",
+            url: "https://www.youtube.com/watch?v=e-USTJuDXng", tabId: 1,
+            startedAt: start, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start, pos: 0),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 6_000, pos: 0, reason: "video-changed"),
+            ])
+        // The very next View once the rebind lands: same real video, this
+        // time under the Adapter's own id.
+        let afterRebind = FlushView(
+            viewId: "after", service: "youtube", videoId: "e-USTJuDXng",
+            url: "https://www.youtube.com/watch?v=e-USTJuDXng", durationSec: 700, adapterId: "youtube",
+            tabId: 1, startedAt: start + 6_000, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start + 6_000, pos: 0),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 141_000, pos: 135, reason: "nav"),
+            ])
+        _ = try store.record(flush(sentAt: start + 141_000, views: [beforeRebind, afterRebind]), serverTime: start + 141_000)
+
+        let videos = try #require(store.history(for: .today, now: Date(epochMillis: start + 141_000)).first?.videos)
+        #expect(videos.count == 1)
+        let row = try #require(videos.first)
+        #expect(row.videoId == "e-USTJuDXng")
+        #expect(row.watchCount == 2)
+        #expect(row.watchedMs == 6_000 + 135_000)
+    }
+
+    @Test("History leaves a generic-fallback id alone when its own URL names no video to recover")
+    func historyKeepsUnrecoverableGenericIdAsIs() throws {
+        let start = local(2024, 1, 1, 12).epochMillis
+        let store = try EventStore(path: ":memory:")
+        _ = try store.record(flush(sentAt: start - 1, views: []), serverTime: start - 1)
+        // A homepage hover-preview: the page never named a video at all, so
+        // there is nothing in its URL to recover — this id stays exactly what
+        // it was.
+        let preview = FlushView(
+            viewId: "preview", service: "youtube.com", videoId: "sha1:deadbeef",
+            url: "https://www.youtube.com/", tabId: 1, startedAt: start, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start, pos: 0),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 5_000, pos: 0, reason: "video-changed"),
+            ])
+        _ = try store.record(flush(sentAt: start + 5_000, views: [preview]), serverTime: start + 5_000)
+
+        let videos = try #require(store.history(for: .today, now: Date(epochMillis: start + 5_000)).first?.videos)
+        #expect(videos.map(\.videoId) == ["sha1:deadbeef"])
+    }
+
+    @Test("readTimeVideoId recovers a YouTube video's real id from its URL, only for a generic-fallback id")
+    func readTimeVideoIdRules() {
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/watch?v=abc123") == "abc123")
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/shorts/abc123") == "abc123")
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/live/abc123") == "abc123")
+        // Already a real id (the Adapter bound from the start) — left alone.
+        #expect(EventStore.readTimeVideoId(stored: "abc123", url: "https://www.youtube.com/watch?v=abc123") == "abc123")
+        // Nothing to recover: the page names no video.
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/") == "sha1:deadbeef")
+        // Not YouTube at all — a generic id from some other Adapter-less site
+        // is exactly as untrustworthy as the schema says, and stays put.
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://example.com/watch?v=abc123") == "sha1:deadbeef")
+    }
+
     @Test("readTimeContentFormat only rewrites a standard View on a /shorts/ path")
     func readTimeContentFormatRules() {
         #expect(EventStore.readTimeContentFormat(stored: "standard", url: "https://youtube.com/shorts/abc") == "short")

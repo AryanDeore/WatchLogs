@@ -44,6 +44,19 @@ test("two players in one frame are told apart by their own sources, on request",
   assert.equal(read(page, { mediaSrc: "https://example.com/a.mp4" }).videoIdSource, "https://example.com/gallery");
 });
 
+test("a disambiguateKey names the player itself, so a churning mediaSrc doesn't reshuffle its id", () => {
+  const page = "https://example.com/gallery";
+  // Same player, two loops of an ad slot that swapped its underlying source
+  // between them — still one id, because the caller named the slot, not the
+  // source it happened to be showing.
+  const loopOne = read(page, { mediaSrc: "https://ads.example.com/creative-aaaa.mp4", disambiguate: true, disambiguateKey: "slot-1" });
+  const loopTwo = read(page, { mediaSrc: "https://ads.example.com/creative-bbbb.mp4", disambiguate: true, disambiguateKey: "slot-1" });
+  assert.equal(loopOne.videoIdSource, loopTwo.videoIdSource);
+  // A different slot on the same page is still told apart.
+  const otherSlot = read(page, { mediaSrc: "https://ads.example.com/creative-aaaa.mp4", disambiguate: true, disambiguateKey: "slot-2" });
+  assert.notEqual(loopOne.videoIdSource, otherSlot.videoIdSource);
+});
+
 test("a blob or data source cannot tell anything apart", () => {
   const page = "https://example.com/gallery";
   assert.equal(read(page, { mediaSrc: "blob:https://example.com/x", disambiguate: true }).videoIdSource, page);

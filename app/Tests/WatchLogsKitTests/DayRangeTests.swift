@@ -26,15 +26,29 @@ struct DayRangeTests {
         Calendar.current.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min, second: s))!
     }
 
-    /// One View, watched continuously from `startMs` for `durationMs` — just
-    /// `play` then `viewEnded`, no gaps, for a session long enough to run
-    /// straight through the target hour and the 10:00 cap.
+    /// One View, watched continuously from `startMs` for `durationMs` — `play`,
+    /// a heartbeat every 2.5 minutes confirming it's still playing (comfortably
+    /// under the stall backstop's 3-minute gap, same as a real player would
+    /// send), then `viewEnded`, for a session long enough to run straight
+    /// through the target hour and the 10:00 cap.
     private func continuousSession(startMs: Int, durationMs: Int) -> Data {
-        let events = [
+        var events = [
             #"{ "seq": 1, "type": "mediaFound", "t": \#(startMs), "pos": 0 }"#,
             #"{ "seq": 2, "type": "play", "t": \#(startMs), "pos": 0 }"#,
-            #"{ "seq": 3, "type": "viewEnded", "t": \#(startMs + durationMs), "pos": 0, "reason": "nav" }"#,
         ]
+        var seq = 3
+        let stepMs = 150_000
+        var t = startMs
+        while t + stepMs < startMs + durationMs {
+            t += stepMs
+            events.append(
+                #"{ "seq": \#(seq), "type": "sample", "t": \#(t), "pos": 0, "playing": true, "visible": true }"#
+            )
+            seq += 1
+        }
+        events.append(
+            #"{ "seq": \#(seq), "type": "viewEnded", "t": \#(startMs + durationMs), "pos": 0, "reason": "nav" }"#
+        )
         return FlushJSON.envelope(views: [FlushJSON.view(id: "view-continuous-\(startMs)", open: false, events: events)])
     }
 

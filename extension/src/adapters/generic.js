@@ -33,15 +33,29 @@ const AUTHOR_META = ["meta[name=author]", "meta[property='og:video:director']", 
  * @param {Document} page.document
  * @param {string} [page.mediaSrc]  the element's own `currentSrc`
  * @param {number} [page.duration]  the element's `duration`
- * @param {boolean} [page.disambiguate]  fold the element's own source into the
- *   id — set only for the second and later players in one frame, so that a page
- *   showing two videos at once is two Views while the ordinary one-player page
- *   keeps the clean page-address id
+ * @param {boolean} [page.disambiguate]  fold something that tells this player
+ *   apart from its frame's others into the id — set only for the second and
+ *   later players in one frame, so that a page showing two videos at once is
+ *   two Views while the ordinary one-player page keeps the clean page-address
+ *   id
+ * @param {string|null} [page.disambiguateKey]  the caller's own stable id for
+ *   *this player* (e.g. its position among the frame's tracked elements), used
+ *   in place of `mediaSrc` when given. A player's `currentSrc` can change
+ *   under it — an ad slot swapping creative on every loop is the same slot
+ *   playing again, not a new one — so a caller that can name the player
+ *   itself should, rather than let the id churn with its source.
  */
-export function readGeneric({ location, document, mediaSrc = "", duration = NaN, disambiguate = false } = {}) {
+export function readGeneric({
+  location,
+  document,
+  mediaSrc = "",
+  duration = NaN,
+  disambiguate = false,
+  disambiguateKey = null,
+} = {}) {
   const href = location?.href ?? "";
   const pageId = videoIdSourceFor(href);
-  const srcId = disambiguate ? identifyingSrc(mediaSrc) : null;
+  const srcId = disambiguate ? (disambiguateKey ?? identifyingSrc(mediaSrc)) : null;
 
   return {
     service: serviceFor(href),

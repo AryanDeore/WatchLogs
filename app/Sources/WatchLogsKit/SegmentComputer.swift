@@ -33,8 +33,7 @@ public enum SegmentComputer {
 
     public static func segments(viewId: String, events: [RawEvent], isLive: Bool = false) -> [Segment] {
         let normalized = normalize(events)
-        let hasHeartbeat = normalized.contains { $0.type == .sample }
-        var machine = Machine(viewId: viewId, isLive: isLive, hasHeartbeat: hasHeartbeat)
+        var machine = Machine(viewId: viewId, isLive: isLive)
         for event in normalized {
             machine.apply(event)
         }
@@ -75,11 +74,6 @@ private struct Machine {
 
     let viewId: String
     let isLive: Bool
-    /// Whether this View's log carries any `sample` Events at all. Without them
-    /// there is no heartbeat cadence to measure a gap against, so the stall
-    /// backstop stays out of the way (`hardCap` / rollup tests drive exactly
-    /// this shape).
-    let hasHeartbeat: Bool
 
     /// The last Event's instant and media position, for spotting an
     /// unmonitored gap while a Segment is open.
@@ -111,10 +105,9 @@ private struct Machine {
 
     private var viewEnded = false
 
-    init(viewId: String, isLive: Bool, hasHeartbeat: Bool) {
+    init(viewId: String, isLive: Bool) {
         self.viewId = viewId
         self.isLive = isLive
-        self.hasHeartbeat = hasHeartbeat
     }
 
     private var foreground: Bool { visible || pip }
@@ -233,12 +226,17 @@ private struct Machine {
     }
 
     /// An open Segment that spans a long gap with no heartbeat and no media
-    /// progress was not being watched across it — the player was frozen. Bank
-    /// only the media advance plus a buffering margin; the rest is subtracted
-    /// from the Segment's end in `close`. A `sample`, however sparse, is proof
-    /// the player reported in, so a gap a sample ends is left untouched.
+    /// progress was not being watched across it — the player was frozen (or the
+    /// Mac was asleep, or the tab was thrown away and never got to heartbeat at
+    /// all). Bank only the media advance plus a buffering margin; the rest is
+    /// subtracted from the Segment's end in `close`. A `sample`, however sparse,
+    /// is proof the player reported in, so a gap a sample ends is left
+    /// untouched. This applies even to a View whose log has *no* `sample`
+    /// Events anywhere — a `play` with nothing else until an hours-later
+    /// `viewEnded` is exactly the shape a suspended tab leaves behind, and it
+    /// gets no more benefit of the doubt than a gap between two heartbeats does.
     private mutating func accountForUnmonitoredGap(before event: RawEvent) {
-        guard hasHeartbeat, !isLive, open != nil, event.type != .sample,
+        guard !isLive, open != nil, event.type != .sample,
               let lastSeenAt, let lastSeenPos, let pos = event.pos else { return }
         let gap = event.t - lastSeenAt
         guard gap > SegmentComputer.maxHeartbeatGapMs else { return }

@@ -1155,7 +1155,7 @@ public final class EventStore: @unchecked Sendable {
         ) { row in
             let viewId = row.text(0)
             let service = row.text(1)
-            let videoId = row.text(15)
+            let videoId = Self.readTimeVideoId(stored: row.text(15), url: row.text(14))
             let startedAt = row.int(6)
             let key = "\(ServiceDisplayBucket.from(service: service))\u{0}\(videoId)"
             var group = groups[key] ?? Group(
@@ -1254,6 +1254,45 @@ public final class EventStore: @unchecked Sendable {
     /// stored "live" already carries its own format and is left untouched.
     static func readTimeContentFormat(stored: String, url: String) -> String {
         stored == "standard" && url.contains("/shorts/") ? "short" : stored
+    }
+
+    /// A generic-fallback View is identified by hashing the page's own address
+    /// (`content.js`'s `videoIdFor`) rather than the video — deliberately, since
+    /// most Adapter-less sites keep no id in their query string worth trusting.
+    /// YouTube is the one site that does (`?v=`), so a stored id that is one of
+    /// these hashes, on a View whose own `url` names a real YouTube video,
+    /// recovers that video's true id here, at read time — the same technique
+    /// `readTimeContentFormat` already uses for the Shorts format. Recovering to
+    /// the exact id a bound Adapter would itself have reported (not some
+    /// separately-namespaced value) means a View that briefly fell back to the
+    /// hash before its Adapter caught up folds into the very same row as the
+    /// rest of that watch, past or future, instead of sitting apart from it
+    /// forever. A hover-preview whose own page never named a video (the bare
+    /// home feed) has nothing to recover and keeps its shared, honestly
+    /// anonymous id — there is no way to know, after the fact, which preview it
+    /// was.
+    static func readTimeVideoId(stored: String, url: String) -> String {
+        guard stored.hasPrefix("sha1:"), let recovered = youTubeVideoId(fromURL: url) else { return stored }
+        return recovered
+    }
+
+    /// The id a bound `YouTubeAdapter` would report for `url`, mirroring its own
+    /// `fromUrl` (`extension/src/adapters/youtube.js`) — a watch page's `?v=`,
+    /// or the id off `/shorts/`, `/live/`, `/embed/`. `nil` for anything else,
+    /// including a URL with no video named at all.
+    private static func youTubeVideoId(fromURL url: String) -> String? {
+        guard let components = URLComponents(string: url), let host = components.host?.lowercased() else { return nil }
+        guard host == "youtube.com" || host.hasSuffix(".youtube.com") else { return nil }
+        let path = components.path
+        if path == "/watch" {
+            let id = components.queryItems?.first { $0.name == "v" }?.value
+            return id?.isEmpty == false ? id : nil
+        }
+        for prefix in ["/shorts/", "/live/", "/embed/"] where path.hasPrefix(prefix) {
+            let id = path.dropFirst(prefix.count).split(separator: "/").first.map(String.init)
+            return id?.isEmpty == false ? id : nil
+        }
+        return nil
     }
 
     private func loadSegments(viewId: String) throws -> [Segment] {
