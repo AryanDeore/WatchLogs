@@ -46,16 +46,16 @@ struct SettingsView: View {
                         Label {
                             Text("Icon only")
                         } icon: {
-                            Image(systemName: "play.rectangle.fill")
+                            LogPlayMarkView()
                         }
                         .tag(AppSettings.IconDisplay.iconOnly)
                         
                         Label {
                             Text("Icon + time")
                         } icon: {
-                            HStack(spacing: 2) {
-                                Image(systemName: "play.rectangle.fill")
-                                Text("1h05").font(.caption)
+                            HStack(spacing: 3) {
+                                LogPlayMarkView()
+                                Text("1h05").font(.caption2)
                             }
                         }
                         .tag(AppSettings.IconDisplay.iconAndTime)
@@ -63,7 +63,7 @@ struct SettingsView: View {
                         Label {
                             Text("Time only")
                         } icon: {
-                            Text("1h05").font(.caption)
+                            Text("1h05").font(.caption2)
                         }
                         .tag(AppSettings.IconDisplay.timeOnly)
                     }
@@ -201,5 +201,28 @@ struct HoverButtonStyle: ButtonStyle {
             .onHover { hovering in
                 isHovered = hovering
             }
+    }
+}
+
+/// SwiftUI view for the LogPlayMark icon (three stepped bars)
+struct LogPlayMarkView: View {
+    var body: some View {
+        Canvas { context, size in
+            let leftInset = size.width * 0.24
+            let barHeight = size.height * 0.15
+            
+            func bar(widthFraction: CGFloat, yFraction: CGFloat) {
+                let width = size.width * widthFraction
+                let y = size.height * (1 - yFraction) - barHeight / 2
+                let rect = CGRect(x: leftInset, y: y, width: width, height: barHeight)
+                let path = Path(roundedRect: rect, cornerRadius: barHeight / 2)
+                context.fill(path, with: .color(.primary))
+            }
+            
+            bar(widthFraction: 0.26, yFraction: 0.28)
+            bar(widthFraction: 0.52, yFraction: 0.50)
+            bar(widthFraction: 0.26, yFraction: 0.72)
+        }
+        .frame(width: 14, height: 14)
     }
 }
