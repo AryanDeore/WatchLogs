@@ -42,7 +42,7 @@ struct PopoverView: View {
             } else {
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
-                        TitleRow(model: model, data: data)
+                        TitleRow(model: model, data: data, transport: transport)
                         Divider()
                         RangePicker(model: model)
                         CalendarBox(model: model, data: data)

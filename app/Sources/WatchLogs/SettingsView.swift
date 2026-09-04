@@ -16,8 +16,6 @@ struct SettingsView: View {
     @State private var retentionDays: Int = 90
     @State private var privateWindows: Bool = false
     @State private var launchAtLogin: Bool = false
-    @State private var refreshing: Bool = false
-    @State private var refreshedAt: Date?
     
     private let launchAtLoginManager = LaunchAtLoginManager()
     private let version = "0.1.0"
@@ -39,57 +37,8 @@ struct SettingsView: View {
 
             Divider()
 
-            ScrollView {
-                Form {
-                    Section {
-                        LabeledContent("Pairing string") {
-                            HStack(spacing: 6) {
-                                Text(pairingString)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .textSelection(.enabled)
-                                Button("Copy") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(pairingString, forType: .string)
-                                }
-                            }
-                        }
-                        .help("Paste into the Extension once. Host, port, token.")
-
-                        LabeledContent("Local port", value: "\(boundPort)")
-                            .help("The App listens on 127.0.0.1. Re-rolls if the port is taken.")
-
-                        Stepper(value: $retentionDays, in: 0...365) {
-                            LabeledContent("Keep raw events for", value: "\(retentionDays) days")
-                        }
-                        .help("Views and computed time are kept forever; only the raw log is pruned.")
-                        .onChange(of: retentionDays) { _, value in
-                            try? transport.setRawEventRetentionDays(value)
-                        }
-
-                        Stepper(value: $targetHour, in: 0...(DayBoundary.hardCapHour - 1)) {
-                            LabeledContent("My day ends around", value: String(format: "%02d:00", targetHour))
-                        }
-                        .help("Watching before this hour files into the previous day.")
-                        .onChange(of: targetHour) { _, value in
-                            try? transport.setTargetHour(value)
-                        }
-
-                        Toggle("Capture playback in private windows", isOn: $privateWindows)
-                            .onChange(of: privateWindows) { _, value in
-                                try? transport.setCapturesPrivateWindows(value)
-                            }
-                    }
-                    
-                    Section("General") {
-                        Toggle("Launch WatchLogs at login", isOn: $launchAtLogin)
-                            .onChange(of: launchAtLogin) { _, enabled in
-                                try? launchAtLoginManager.setEnabled(enabled)
-                            }
-                    }
-                    
-                    Section("Menubar Icon") {
+            Form {
+                Section("Menubar Icon") {
                         Picker("What shows", selection: Binding(
                             get: { settings.iconDisplay },
                             set: { settings.iconDisplay = $0 }
@@ -125,48 +74,64 @@ struct SettingsView: View {
                             ))
                             .help("The colon blinks at 1 Hz while counting.")
                         }
-                    }
-                    
-                    Section("Extensions") {
-                        HStack {
-                            Button {
-                                performRefresh()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    if refreshing {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                    Text("Refresh")
-                                }
-                            }
-                            .disabled(!hasPairedExtension() || refreshing)
-                            
-                            if let at = refreshedAt {
-                                Text("Updated \(timeFormatter.string(from: at))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                }
+                
+                Section("General") {
+                    Toggle("Launch WatchLogs at login", isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { _, enabled in
+                            try? launchAtLoginManager.setEnabled(enabled)
                         }
-                        .help(hasPairedExtension() 
-                            ? "Ask all paired extensions to flush buffered views now."
-                            : "No extension is paired. Pair one first to enable refresh.")
+                    
+                    Stepper(value: $retentionDays, in: 0...365) {
+                        LabeledContent("Keep raw events for", value: "\(retentionDays) days")
+                    }
+                    .help("Views and computed time are kept forever; only the raw log is pruned.")
+                    .onChange(of: retentionDays) { _, value in
+                        try? transport.setRawEventRetentionDays(value)
                     }
 
-                    Section {
-                        Button("Rebuild statistics") {
-                            try? transport.rebuildStatistics()
+                    Stepper(value: $targetHour, in: 0...(DayBoundary.hardCapHour - 1)) {
+                        LabeledContent("My day ends around", value: String(format: "%02d:00", targetHour))
+                    }
+                    .help("Watching before this hour files into the previous day.")
+                    .onChange(of: targetHour) { _, value in
+                        try? transport.setTargetHour(value)
+                    }
+
+                    Toggle("Capture playback in private windows", isOn: $privateWindows)
+                        .onChange(of: privateWindows) { _, value in
+                            try? transport.setCapturesPrivateWindows(value)
                         }
-                        Button("Quit WatchLogs") {
-                            NSApp.terminate(nil)
+                }
+                
+                Section("Extension") {
+                    LabeledContent("Pairing string") {
+                        HStack(spacing: 6) {
+                            Text(pairingString)
+                                .font(.system(.caption, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(pairingString, forType: .string)
+                            }
                         }
                     }
+                    .help("Paste into the Extension once. Host, port, token.")
+
+                    LabeledContent("Local port", value: "\(boundPort)")
+                        .help("The App listens on 127.0.0.1. Re-rolls if the port is taken.")
                 }
-                .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
+
+                Section {
+                    Button("Quit WatchLogs") {
+                        NSApp.terminate(nil)
+                    }
+                }
             }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
             
             Divider()
             
@@ -203,28 +168,5 @@ struct SettingsView: View {
         launchAtLogin = launchAtLoginManager.isEnabled
     }
     
-    private func hasPairedExtension() -> Bool {
-        // TODO: Query transport for active extensions via last flush timestamp
-        // For now, just check if a pairing string exists (conservative: enables
-        // refresh once the string is available, even if no extension has paired yet)
-        !pairingString.isEmpty
-    }
-    
-    private func performRefresh() {
-        refreshing = true
-        // Set a "flush again now" hint that the next Ack will carry
-        // For now, just simulate a refresh with a brief delay
-        // TODO: Implement actual flush-now mechanism via transport
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            refreshing = false
-            refreshedAt = Date()
-        }
-    }
-    
-    private var timeFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .medium
-        return formatter
-    }
+
 }
