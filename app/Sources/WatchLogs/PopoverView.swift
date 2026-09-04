@@ -5,6 +5,7 @@ import WatchLogsKit
 struct PopoverView: View {
     let model: MenubarPopoverReadModel
     let transport: LoopbackTransport
+    let settings: AppSettings
     @State private var chromeHeight: CGFloat = 0
     @State private var paneContentHeight: CGFloat = 0
     @State private var tick = Date()
@@ -35,7 +36,7 @@ struct PopoverView: View {
         // both layers at once.
         ZStack {
             if model.settingsOpen {
-                SettingsView(model: model, transport: transport)
+                SettingsView(model: model, transport: transport, settings: settings)
                     .transition(.move(edge: .trailing))
                     .zIndex(1)
             } else {

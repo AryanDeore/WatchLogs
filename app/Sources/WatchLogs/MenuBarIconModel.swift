@@ -19,6 +19,7 @@ final class MenuBarIconModel {
     private(set) var icon: NSImage
 
     private let transport: LoopbackTransport
+    private let settings: AppSettings
     private let forcePulse: Bool
 
     private var watchedMs = 0
@@ -34,8 +35,9 @@ final class MenuBarIconModel {
 
     /// `forcePulse` (wired to the `WATCHLOGS_FORCE_PULSE` env var) makes the
     /// pulse run without real playback data — for eyeballing the animation.
-    init(transport: LoopbackTransport, forcePulse: Bool = false) {
+    init(transport: LoopbackTransport, settings: AppSettings, forcePulse: Bool = false) {
         self.transport = transport
+        self.settings = settings
         self.forcePulse = forcePulse
         self.icon = .watchLogsMenuBar(watchedMs: 0, markOpacity: 1)
 
@@ -48,6 +50,11 @@ final class MenuBarIconModel {
     /// The timers are `[weak self]` and the model lives for the whole app
     /// session (like `MenubarPopoverReadModel`), so there is no `deinit`
     /// teardown; the run loop drops both timers at process exit.
+    
+    /// Force an immediate re-render of the icon. Called when settings change.
+    func forceUpdate() {
+        refreshState()
+    }
 
     private func refreshState() {
         watchedMs = (try? transport.todayTotals().watchedMs) ?? watchedMs
@@ -55,10 +62,10 @@ final class MenuBarIconModel {
         let playingNow = forcePulse || Self.anythingPlaying(transport)
         if playingNow != isPlaying {
             isPlaying = playingNow
-            if playingNow { startPulse() } else { stopPulse() }
+            if playingNow && settings.blinkIconWhilePlaying { startPulse() } else { stopPulse() }
         }
         // Keep the number current between pulse frames (and while idle).
-        if !isPlaying { render(markOpacity: 1) }
+        if !isPlaying || !settings.blinkIconWhilePlaying { render(markOpacity: 1) }
     }
 
     private static func anythingPlaying(_ transport: LoopbackTransport) -> Bool {
@@ -89,6 +96,12 @@ final class MenuBarIconModel {
     }
 
     private func render(markOpacity: Double) {
-        icon = .watchLogsMenuBar(watchedMs: watchedMs, markOpacity: markOpacity)
+        icon = .watchLogsMenuBar(
+            watchedMs: watchedMs,
+            markOpacity: markOpacity,
+            display: settings.iconDisplay,
+            separator: settings.timeSeparator,
+            blinkSeparator: settings.blinkSeparator && isPlaying
+        )
     }
 }
