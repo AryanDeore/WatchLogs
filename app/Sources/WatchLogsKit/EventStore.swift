@@ -980,6 +980,62 @@ public final class EventStore: @unchecked Sendable {
         return try loadSegments(viewId: viewId)
     }
 
+    /// A View's Event log, oldest first, exactly as stored.
+    ///
+    /// The counterpart to `segments(viewId:)`: that returns what was derived,
+    /// this returns what it was derived *from*. Having both means a tool can
+    /// re-run `SegmentComputer` over the log and compare — which is the only way
+    /// to tell "this data is wrong" apart from "this data was written by an
+    /// older build".
+    public func rawEvents(viewId: String) throws -> [RawEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return try loadEvents(viewId: viewId)
+    }
+
+    /// Stored Views whose id, video id, title or author contains `query`, newest
+    /// first. An empty `query` is "the most recent Views", which is what you
+    /// want when something just went wrong and you do not yet know its name.
+    public func viewRecords(matching query: String = "", limit: Int = 20) throws -> [ViewRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let like = "%\(query)%"
+        var records: [ViewRecord] = []
+        try database.query(
+            """
+            SELECT view_id, service, content_format, embedded, video_id, url, title, author,
+                   duration_sec, metadata_source, adapter_id, tab_id, started_at_ms, open,
+                   previous_view_id
+            FROM views
+            WHERE ? = ''
+               OR view_id LIKE ? OR video_id LIKE ? OR title LIKE ? OR author LIKE ?
+            ORDER BY started_at_ms DESC
+            LIMIT ?
+            """,
+            [.text(query), .text(like), .text(like), .text(like), .text(like), .int(limit)]
+        ) { row in
+            records.append(ViewRecord(
+                viewId: row.text(0),
+                service: row.text(1),
+                contentFormat: row.text(2),
+                embedded: row.bool(3),
+                videoId: row.text(4),
+                url: row.text(5),
+                title: row.optionalText(6),
+                author: row.optionalText(7),
+                durationSec: row.optionalDouble(8),
+                metadataSource: row.optionalText(9),
+                adapterId: row.optionalText(10),
+                tabId: row.int(11),
+                startedAtMs: row.int(12),
+                open: row.bool(13),
+                previousViewId: row.optionalText(14)
+            ))
+        }
+        return records
+    }
+
     /// Row counts, for tests that need to see that a rejected Flush stored
     /// nothing.
     public struct Counts: Equatable, Sendable {
@@ -1363,7 +1419,8 @@ public final class EventStore: @unchecked Sendable {
                 embedded: group.embedded, title: group.title, author: group.author,
                 firstWatchedAt: Date(epochMillis: group.minWallStart),
                 lastWatchedAt: Date(epochMillis: group.maxWallEnd), watchedMs: group.watchedMs,
-                watchCount: group.viewIds.count, knownDurationSec: group.durationSec,
+                watchCount: group.viewIds.count, viewIds: group.viewIds.sorted(),
+                knownDurationSec: group.durationSec,
                 isOpen: group.open, isPlaying: isPlaying, coverage: coverage
             )
         }
