@@ -431,16 +431,25 @@ public final class EventStore: @unchecked Sendable {
         try reconcile(calendar: calendar)
         let resolved = try resolveRange(kind, openStart: openStart, calendar: calendar)
         let endMs = resolved.includesOpenDay ? now.epochMillis : resolved.endMs
+        // Grouped by the stored service and bucketed in Swift instead of
+        // compared to a SQL literal. An embedded player is recorded under
+        // whatever name its frame resolved to — `youtube` where the Adapter
+        // bound, `youtube.com` or `youtube-nocookie.com` where it did not —
+        // and `v.service = 'youtube'` silently dropped every one of the latter.
         var watchedMs = 0
         try database.query(
             """
-            SELECT COALESCE(SUM(MIN(s.wall_end_ms, ?) - MAX(s.wall_start_ms, ?)), 0)
+            SELECT v.service, COALESCE(SUM(MIN(s.wall_end_ms, ?) - MAX(s.wall_start_ms, ?)), 0)
             FROM segments s JOIN views v ON v.view_id = s.view_id
-            WHERE s.kind = 'watched' AND v.service = 'youtube' AND v.embedded = 1
+            WHERE s.kind = 'watched' AND v.embedded = 1
               AND s.wall_end_ms > ? AND s.wall_start_ms < ?
+            GROUP BY v.service
             """,
             [.int(endMs), .int(resolved.startMs), .int(resolved.startMs), .int(endMs)]
-        ) { row in watchedMs = row.int(0) }
+        ) { row in
+            guard ServiceDisplayBucket.from(service: row.text(0)) == .youtube else { return }
+            watchedMs += row.int(1)
+        }
         return watchedMs
     }
 

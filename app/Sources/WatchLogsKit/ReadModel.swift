@@ -87,11 +87,15 @@ public struct TotalsSlice: Equatable, Sendable {
 /// that extracts a video's id and metadata. Any other Service falls back to
 /// generic extraction and is flagged as needing one.
 public enum Adapter {
-    public static let shippedServices: Set<String> = ["youtube", "netflix"]
-
     /// Computed, not stored (issue #22): a historical View re-flags the day an
     /// Adapter ships for its Service, since nothing needs migrating.
+    ///
+    /// Asked of the display bucket rather than the raw string, so the question
+    /// stays "does WatchLogs ship a reader for this platform": `youtube.com`
+    /// and `youtu.be` are YouTube, and YouTube has one. Whether the Adapter
+    /// actually *bound* on a given View is a different question, and
+    /// `views.adapter_id` still answers it on its own.
     public static func needsAdapter(service: String, adapterId: String?) -> Bool {
-        adapterId == nil && !shippedServices.contains(service)
+        adapterId == nil && !ServiceDisplayBucket.from(service: service).hasShippedAdapter
     }
 }

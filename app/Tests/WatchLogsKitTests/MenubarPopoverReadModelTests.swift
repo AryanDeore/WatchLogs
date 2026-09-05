@@ -77,7 +77,7 @@ struct MenubarPopoverReadModelTests {
         #expect(ServiceDisplayBucket.from(service: "youtube") == .youtube)
         #expect(ServiceDisplayBucket.from(service: "netflix") == .netflix)
 
-        // Hostname form: the current Adapter-less extension slice.
+        // Hostname form: a frame the Adapter did not bind on.
         #expect(ServiceDisplayBucket.from(service: "youtube.com") == .youtube)
         #expect(ServiceDisplayBucket.from(service: "www.youtube.com") == .youtube)
         #expect(ServiceDisplayBucket.from(service: "m.youtube.com") == .youtube)
@@ -88,6 +88,32 @@ struct MenubarPopoverReadModelTests {
         #expect(ServiceDisplayBucket.from(service: "twitch") == .otherSites)
         #expect(ServiceDisplayBucket.from(service: "thisishulu.com") == .otherSites)
         #expect(ServiceDisplayBucket.from(service: "unknown") == .otherSites)
+    }
+
+    @Test("a brand pattern takes subdomains and public suffixes nobody listed, and stops at the brand")
+    func serviceDisplayBucketsMatchUnlistedSubdomainsAndSuffixes() {
+        // Never visited, never listed — the shape of the name is what matches.
+        #expect(ServiceDisplayBucket.from(service: "music.youtube.com") == .youtube)
+        #expect(ServiceDisplayBucket.from(service: "gaming.some-thing.youtube.com") == .youtube)
+        #expect(ServiceDisplayBucket.from(service: "youtube.co.uk") == .youtube)
+        #expect(ServiceDisplayBucket.from(service: "www.youtu.be") == .youtube)
+        #expect(ServiceDisplayBucket.from(service: "www.netflix.com") == .netflix)
+
+        // The brand spellings the pattern has to state outright: neither is
+        // derivable from "youtube".
+        #expect(ServiceDisplayBucket.from(service: "youtube-nocookie.com") == .youtube)
+        #expect(ServiceDisplayBucket.from(service: "www.youtube-nocookie.com") == .youtube)
+
+        // Case is not identity.
+        #expect(ServiceDisplayBucket.from(service: "M.YouTube.com") == .youtube)
+
+        // The brand has to be the registrable part of the name, not any label
+        // in it, and not a prefix of a longer word.
+        #expect(ServiceDisplayBucket.from(service: "youtube.somebody.com") == .otherSites)
+        #expect(ServiceDisplayBucket.from(service: "notyoutube.com") == .otherSites)
+        #expect(ServiceDisplayBucket.from(service: "youtuber.com") == .otherSites)
+        #expect(ServiceDisplayBucket.from(service: "youtu.com") == .otherSites)
+        #expect(ServiceDisplayBucket.from(service: "netflixmirror.com") == .otherSites)
     }
 
     @Test("range labels use the readable calendar form even with no watched Views")
@@ -297,6 +323,30 @@ struct MenubarPopoverReadModelTests {
             ]
         )
         _ = try store.record(FlushEnvelope(schemaVersion: 1, flushId: UUID().uuidString, sentAt: now.epochMillis, agent: .init(extInstanceId: "ext", extVersion: "1", browser: "chrome", os: "macOS"), views: [embedded, direct]), serverTime: now.epochMillis)
+
+        #expect(try store.embeddedYouTubeWatchedMs(for: .today, now: now) == 60_000)
+    }
+
+    @Test("embedded YouTube time counts a View the Adapter never bound on, stored under the bare hostname")
+    func embeddedYouTubeCountsHostnameNamedViews() throws {
+        let now = local(2024, 1, 1, 14)
+        let store = try EventStore(path: ":memory:")
+        // Opens the Day before the View lands, as the sibling test above does.
+        _ = try store.record(FlushEnvelope(schemaVersion: 1, flushId: UUID().uuidString, sentAt: local(2024, 1, 1, 11).epochMillis, agent: .init(extInstanceId: "ext", extVersion: "1", browser: "chrome", os: "macOS"), views: []), serverTime: local(2024, 1, 1, 11).epochMillis)
+
+        // Same embedded player, named by its frame's host because the Adapter
+        // did not bind. It is still YouTube time.
+        let embedded = FlushView(
+            viewId: "embedded-host", service: "youtube.com", contentFormat: "standard", embedded: true,
+            videoId: "embedded-host", url: "https://example.com/embed", adapterId: nil, tabId: 1,
+            startedAt: local(2024, 1, 1, 12).epochMillis, open: false,
+            events: [
+                RawEvent(seq: 1, type: .mediaFound, t: local(2024, 1, 1, 12).epochMillis, pos: 0),
+                RawEvent(seq: 2, type: .play, t: local(2024, 1, 1, 12).epochMillis, pos: 0),
+                RawEvent(seq: 3, type: .viewEnded, t: local(2024, 1, 1, 12, 1).epochMillis, pos: 60, reason: "nav"),
+            ]
+        )
+        _ = try store.record(FlushEnvelope(schemaVersion: 1, flushId: UUID().uuidString, sentAt: now.epochMillis, agent: .init(extInstanceId: "ext", extVersion: "1", browser: "chrome", os: "macOS"), views: [embedded]), serverTime: now.epochMillis)
 
         #expect(try store.embeddedYouTubeWatchedMs(for: .today, now: now) == 60_000)
     }
