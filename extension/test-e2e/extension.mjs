@@ -18,47 +18,98 @@ import { tmpdir } from "node:os";
 const EXTENSION_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
+ * Run `expression` inside `page`'s own content-script world — the same isolated
+ * V8 world content.js runs in, not the page's.
+ *
+ * Chrome gives every content script its own isolated world with its own copy of
+ * `document`'s wrapper and its own globals, so an override made through an
+ * ordinary main-world `page.evaluate` is invisible to content.js. This reaches
+ * into that world over CDP (`Runtime.evaluate` against the execution context
+ * named after the extension, per `chrome.runtime.getManifest().name`), which is
+ * the only way to hand the page helper a fact the browser will not produce on
+ * demand.
+ *
+ * @returns {Promise<unknown>} whatever `expression` evaluated to
+ */
+export async function inContentWorld(context, page, expression) {
+  const cdp = await context.newCDPSession(page);
+  try {
+    const contexts = [];
+    cdp.on("Runtime.executionContextCreated", (event) => contexts.push(event.context));
+    await cdp.send("Runtime.enable");
+
+    // A content script's isolated world is named after the extension (here,
+    // manifest.json's `name`, "WatchLogs") and its own origin is the
+    // extension's — not the page's — so match on name alone. This CDP session
+    // is scoped to `page`, so nothing else can produce that name here.
+    const deadline = Date.now() + 5_000;
+    let world;
+    while (!(world = contexts.find((c) => c.name === "WatchLogs"))) {
+      if (Date.now() > deadline) {
+        throw new Error("inContentWorld: never saw the content script's isolated world");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", {
+      contextId: world.id,
+      expression,
+      returnByValue: true,
+    });
+    if (exceptionDetails) throw new Error(`inContentWorld: ${exceptionDetails.text}`);
+    return result.value;
+  } finally {
+    await cdp.detach();
+  }
+}
+
+/**
  * Fire a real `visibilitychange` at `page`'s own content-script world, with
  * `document.visibilityState`/`hidden` overridden first.
  *
  * There's no faking a real OS-level tab switch here — a background tab in
  * this Chromium reports the same `hasFocus()`/`visibilityState` as the
  * foreground one, headed or not, so `page.bringToFront()` on a second tab
- * doesn't actually hide the first. And overriding the property from the
- * page's normal (main-world) `page.evaluate` doesn't reach content.js either:
- * Chrome gives every content script its own isolated V8 world with its own
- * copy of `document`'s wrapper, so a main-world override is invisible to it.
- * This reaches into that same isolated world over CDP (`Runtime.evaluate`
- * against the execution context named after the extension, per
- * `chrome.runtime.getManifest().name`) and overrides it there, so content.js
- * reads exactly what a real hidden tab would hand it.
+ * doesn't actually hide the first. Overriding it in the world content.js
+ * actually reads makes it see exactly what a real hidden tab would hand it.
  */
 export async function hidePage(context, page) {
-  const cdp = await context.newCDPSession(page);
-  const contexts = [];
-  cdp.on("Runtime.executionContextCreated", (event) => contexts.push(event.context));
-  await cdp.send("Runtime.enable");
-
-  // A content script's isolated world is named after the extension (here,
-  // manifest.json's `name`, "WatchLogs") and its own origin is the
-  // extension's — not the page's — so match on name alone. This CDP session
-  // is scoped to `page`, so nothing else can produce that name here.
-  const deadline = Date.now() + 5_000;
-  let world;
-  while (!(world = contexts.find((c) => c.name === "WatchLogs"))) {
-    if (Date.now() > deadline) throw new Error("hidePage: never saw the content script's isolated world");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-
-  await cdp.send("Runtime.evaluate", {
-    contextId: world.id,
-    expression: `
+  await inContentWorld(
+    context,
+    page,
+    `
       Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
       Object.defineProperty(document, "hidden", { value: true, configurable: true });
       document.dispatchEvent(new Event("visibilitychange"));
     `,
-  });
-  await cdp.detach();
+  );
+}
+
+/**
+ * Put `page`'s content-script world through what a closed laptop lid does to
+ * it: the wall clock jumps by `ms` while the player's own clock stands still.
+ *
+ * A real suspension cannot be staged here — Playwright's clock control patches
+ * the main world, and freezing the renderer for long enough to trip the
+ * threshold would cost the suite a minute of real time per test. What a
+ * suspension *is*, from content.js's point of view, is `Date.now()` having
+ * skipped ahead since the last beat, so that is what is staged: the clock is
+ * moved (permanently, as waking from a real sleep moves it) and the page
+ * lifecycle's own `resume` is fired, exactly as a thawed tab gets.
+ */
+export async function suspendPage(context, page, ms) {
+  await inContentWorld(
+    context,
+    page,
+    `
+      (() => {
+        const skew = ${ms};
+        const realNow = Date.now.bind(Date);
+        Date.now = () => realNow() + skew;
+        document.dispatchEvent(new Event("resume"));
+      })();
+    `,
+  );
 }
 
 /**

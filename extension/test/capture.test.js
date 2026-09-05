@@ -4,7 +4,15 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SCHEMA_VERSION, initCapture, apply, buildFlush, isAdvancing } from "../src/capture.js";
+import {
+  SCHEMA_VERSION,
+  SUSPENDED_MS,
+  initCapture,
+  apply,
+  buildFlush,
+  isAdvancing,
+  unwatchedGapMs,
+} from "../src/capture.js";
 
 // A player that never loaded a byte reports `paused === false` forever — the
 // user pressed play, the network never answered. Treating that as playback once
@@ -432,4 +440,140 @@ test("the module never reaches for a DOM or an extension API", async () => {
   for (const forbidden of ["document", "window", "navigator", "chrome.", "browser."]) {
     assert.ok(!source.includes(forbidden), `capture.js must not mention ${forbidden}`);
   }
+});
+
+// --- Suspension: the wall clock the Extension was not running for -------------
+
+// Issue #32. The Extension's one blind spot is its own absence — a closed lid, a
+// frozen tab, a process that never got to fire `pause`. Nothing marks the start
+// of it, and the beat that resumes afterwards is indistinguishable from the beat
+// before, so a four-hour nap used to arrive at the App as four hours of watching.
+// The player's own clock is what tells a suspension apart from a slow beat.
+
+test("a beat on time accounts for itself", () => {
+  const gap = unwatchedGapMs({
+    at: T0 + 5000,
+    since: T0,
+    players: [{ posThen: 10, posNow: 15, rate: 1 }],
+  });
+  assert.equal(gap, 0);
+});
+
+test("a throttled background tab, beating once a minute, accounts for its whole minute", () => {
+  // Chromium throttles a hidden page's timers; the media still advanced, so
+  // nothing was missed and no PAUSE should be synthesized.
+  const gap = unwatchedGapMs({
+    at: T0 + 60_000,
+    since: T0,
+    players: [{ posThen: 100, posNow: 160, rate: 1 }],
+  });
+  assert.equal(gap, 0);
+  assert.ok(gap <= SUSPENDED_MS);
+});
+
+test("a closed lid accounts for none of the wall clock it slept through", () => {
+  const fourHours = 4 * 60 * 60 * 1000;
+  const gap = unwatchedGapMs({
+    at: T0 + fourHours,
+    since: T0,
+    players: [{ posThen: 10, posNow: 10, rate: 1 }],
+  });
+  assert.equal(gap, fourHours);
+  assert.ok(gap > SUSPENDED_MS);
+});
+
+test("playback rate is what turns media seconds into watched seconds", () => {
+  // A minute at 2x is two minutes of media for one minute of watching, and a
+  // minute at 0.5x is half a minute of media for the same minute — read either
+  // one straight off `currentTime` and half the tabs in the browser look asleep.
+  assert.equal(
+    unwatchedGapMs({ at: T0 + 60_000, since: T0, players: [{ posThen: 0, posNow: 120, rate: 2 }] }),
+    0,
+    "2x: a minute of watching is two minutes of media",
+  );
+  assert.equal(
+    unwatchedGapMs({ at: T0 + 60_000, since: T0, players: [{ posThen: 0, posNow: 30, rate: 0.5 }] }),
+    0,
+    "0.5x: a minute of watching is half a minute of media",
+  );
+});
+
+test("the player that moved is the one that proves the frame was awake", () => {
+  // A pre-roll ad and the video it interrupted share one View. Only one of them
+  // is advancing at a time; the other sitting still is not evidence of a nap.
+  const gap = unwatchedGapMs({
+    at: T0 + 60_000,
+    since: T0,
+    players: [
+      { posThen: 12, posNow: 12, rate: 1 },
+      { posThen: 0, posNow: 60, rate: 1 },
+    ],
+  });
+  assert.equal(gap, 0);
+});
+
+test("a suspension before the first beat has no positions to go on and is caught anyway", () => {
+  // The lid shut two seconds after playback started, before any sample existed.
+  // With nothing to account for the gap, all of it is unwatched.
+  const gap = unwatchedGapMs({ at: T0 + 4 * 60 * 60 * 1000, since: T0, players: [] });
+  assert.equal(gap, 4 * 60 * 60 * 1000);
+});
+
+test("a clock that steps backwards is not a negative gap", () => {
+  assert.equal(unwatchedGapMs({ at: T0 - 5000, since: T0, players: [] }), 0);
+  assert.equal(
+    unwatchedGapMs({ at: T0 + 5000, since: T0, players: [{ posThen: 0, posNow: 600, rate: 1 }] }),
+    0,
+    "a seek forward during the gap cannot make it negative either",
+  );
+});
+
+test("a player whose position cannot be read is ignored rather than trusted", () => {
+  const gap = unwatchedGapMs({
+    at: T0 + 60_000,
+    since: T0,
+    players: [{ posThen: NaN, posNow: 60, rate: 1 }, { posThen: 0, posNow: undefined, rate: 1 }],
+  });
+  assert.equal(gap, 60_000);
+});
+
+// The synthesis the page helper performs on top of that answer: pause every open
+// View back at the last beat that ran, then play again now. `content.js` needs a
+// real DOM and a real `chrome.*`, so what is checked here is that the Capture
+// records that pair the way the App has to read it — the gap counting for nobody.
+test("pausing at the last beat and playing at the wake leaves the gap to nobody", () => {
+  const s = playing();
+  const lastBeat = T0 + 10_000;
+  apply(s, { type: "SAMPLE", at: lastBeat, pos: 10, playing: true, visible: true });
+
+  const wake = lastBeat + 4 * 60 * 60 * 1000;
+  const snapshot = s.lastSampleSnapshot["view-1"];
+  apply(s, { type: "PAUSE", at: snapshot.t, pos: snapshot.pos });
+  apply(s, { type: "PLAY", at: wake, pos: 10 });
+
+  const events = s.views["view-1"].events;
+  const pause = events.find((e) => e.type === "pause");
+  const replay = events.filter((e) => e.type === "play").at(-1);
+  assert.equal(pause.t, lastBeat, "the pause is stamped at the last beat, never at the wake");
+  assert.equal(pause.pos, 10, "and at the position that beat saw, not the one on screen now");
+  assert.equal(replay.t, wake);
+  // seq still climbs monotonically even though `t` steps backwards — `seq` is
+  // the App's ordering authority and `normalize` clamps the timestamps.
+  assert.deepEqual(
+    events.map((e) => e.seq),
+    events.map((_, i) => i + 1),
+  );
+});
+
+test("a second wake notice cannot re-close a View the first one already reopened", () => {
+  const s = playing();
+  apply(s, { type: "SAMPLE", at: T0 + 10_000, pos: 10, playing: true, visible: true });
+  apply(s, { type: "PAUSE", at: T0 + 10_000, pos: 10 });
+  apply(s, { type: "PLAY", at: T0 + 100_000, pos: 10 });
+  const before = s.views["view-1"].events.length;
+
+  // The same instant reported twice — the resumed timer and a `resume` event
+  // racing. `PLAY` on an already-playing View is a no-op, so nothing is minted.
+  apply(s, { type: "PLAY", at: T0 + 100_000, pos: 10 });
+  assert.equal(s.views["view-1"].events.length, before);
 });

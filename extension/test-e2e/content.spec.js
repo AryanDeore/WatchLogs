@@ -17,7 +17,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startStubServer } from "./stub-server.mjs";
-import { launchExtension, hidePage } from "./extension.mjs";
+import { launchExtension, hidePage, suspendPage } from "./extension.mjs";
 import { uniqueTag, taggedUrl, viewsTagged, eventsTagged, viewsSince, waitUntil } from "./helpers.mjs";
 
 let server;
@@ -472,6 +472,57 @@ test(
         (event) => event.type === "viewEnded" && event.viewId === firstViewId,
       );
       assert.equal(ending.reason, "video-changed");
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+// Issue #32. The Extension's blind spot is time it was not running: a closed
+// lid, a frozen tab, a killed renderer. Nothing fires a `pause` and a suspended
+// process does not run its heartbeat timer, so on the way back the last thing
+// recorded is "playing" and the next thing is "playing" — and the whole silence
+// used to arrive at the App as watching.
+test(
+  "a wall clock that jumped while the player stood still is paused back at the last beat",
+  { timeout: 45_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => document.getElementById("v").play());
+
+      // Two real beats first: the second is the last instant this frame can
+      // honestly vouch for, and where the synthetic pause has to land.
+      await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "sample").length >= 2,
+        { timeoutMs: 20_000, message: "expected two samples before the suspension" },
+      );
+      const beatsBefore = eventsTagged(server, tag).filter((event) => event.type === "sample");
+      const lastBeat = beatsBefore.at(-1);
+
+      // The lid shuts for four hours. Nothing in the page runs; the clock moves.
+      await suspendPage(ext.context, page, 4 * 60 * 60 * 1000);
+
+      const pause = await waitUntil(
+        () => eventsTagged(server, tag).find((event) => event.type === "pause"),
+        { timeoutMs: 20_000, message: "expected a pause synthesized on the way back" },
+      );
+
+      const events = eventsTagged(server, tag);
+      const replay = events.filter((event) => event.type === "play").at(-1);
+
+      assert.equal(pause.t, lastBeat.t, "the pause is stamped at the last beat that actually ran");
+      assert.equal(pause.pos, lastBeat.pos, "and at the position that beat saw");
+      assert.ok(replay.t > pause.t, "playback resumes as its own Segment, at the wake");
+      assert.ok(
+        replay.t - pause.t >= 4 * 60 * 60 * 1000 - 60_000,
+        `expected the reopen on the far side of the gap, got ${replay.t - pause.t} ms`,
+      );
+      // What the App reads off this: 10-odd seconds of watching before the nap
+      // and whatever comes after it, with the four hours belonging to nobody.
+      assert.ok(pause.t - events[1].t < 60_000, "the Segment before the nap is seconds, not hours");
     } finally {
       await page.close();
     }

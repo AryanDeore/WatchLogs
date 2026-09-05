@@ -70,6 +70,59 @@ export function isAdvancing({ paused, ended, readyState }) {
 }
 
 /**
+ * How much of a gap between two heartbeats nothing was awake for.
+ *
+ * The Extension's blind spot is time it was not running: a closed lid, a frozen
+ * tab, a process that never got to say `pause`. Coming back, the wall clock has
+ * jumped and the last thing recorded was "playing", which is indistinguishable
+ * from having watched the whole jump.
+ *
+ * The player's own clock is what tells the two apart. If the frame was awake and
+ * merely beating slowly — a hidden tab Chromium has throttled to one timer per
+ * minute — the media advanced by about as much wall time as passed. If the frame
+ * was suspended, the media did not move at all while the wall clock ran on. So
+ * the answer is the gap minus the most wall time any tracked player can account
+ * for, in its own `currentTime`, rate-adjusted (a minute at 2x is two minutes of
+ * media for one minute of watching, and half a minute at 0.5x is still a minute
+ * of watching).
+ *
+ * The busiest player wins rather than the named one: with an ad and its video
+ * sharing a View, whichever of them moved is proof the frame was alive.
+ *
+ * Pure, and takes positions rather than elements, so the reducer's "no DOM" rule
+ * still holds.
+ *
+ * @param {{
+ *   at: number,
+ *   since: number,
+ *   players: Array<{ posThen: number, posNow: number, rate?: number }>,
+ * }} beat  `since` is the last heartbeat's instant, `at` this one's
+ * @returns {number} unaccounted wall-clock ms, never negative
+ */
+export function unwatchedGapMs({ at, since, players }) {
+  const gap = at - since;
+  if (!(gap > 0)) return 0;
+  let played = 0;
+  for (const { posThen, posNow, rate } of players) {
+    if (!Number.isFinite(posThen) || !Number.isFinite(posNow)) continue;
+    const speed = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    played = Math.max(played, ((posNow - posThen) * 1000) / speed);
+  }
+  return Math.max(0, gap - played);
+}
+
+/**
+ * Unaccounted wall clock past which a gap is a suspension rather than jitter.
+ *
+ * Well clear of a throttled background tab's one-per-minute beat, which
+ * `unwatchedGapMs` already accounts for in full, and of the second or so of
+ * slack between a timer's due time and when it actually runs. Anything under
+ * this is left alone: the read side's own backstop ignores gaps below three
+ * minutes anyway, so half a minute of slop costs nothing.
+ */
+export const SUSPENDED_MS = 30_000;
+
+/**
  * @typedef {{ extInstanceId: string, extVersion: string, browser: string, os: string }} Agent
  */
 
