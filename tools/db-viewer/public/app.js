@@ -423,6 +423,13 @@ function hideLint() {
 // One View, all the way down the pipeline. The report comes from the wl-replay
 // binary, which calls the shipped SegmentComputer and read model — so what is
 // rendered here is what the app itself would compute, not a second opinion.
+//
+// Results and report are two panes, not one. Rendering both into the same
+// element meant picking a match threw the other matches away: three Views share
+// the title "MoErgo Go60 — long term review", and choosing the wrong one first
+// left nothing to go back to.
+
+const replay = { query: '', views: [], selected: null };
 
 async function showReplay(viewId = null) {
   state.showingReplay = true;
@@ -439,33 +446,50 @@ async function showReplay(viewId = null) {
   el('replay-item').classList.add('active');
   renderTableList();
 
-  const body = el('replay-body');
-  body.innerHTML = '<p class="replay-loading">…</p>';
   try {
-    if (viewId) {
-      el('replay-find').value = viewId;
-      renderReplay(await fetchJson(`/api/replay?view=${encodeURIComponent(viewId)}`));
-    } else {
-      renderViewList(await fetchJson('/api/replay'));
-    }
+    // Arriving with a View in hand — a view_id clicked in some table — the
+    // query is not the user's and must not be overwritten with a UUID they
+    // then have to clear before they can search again.
+    if (!replay.views.length) await runSearch(replay.query);
+    if (viewId) await openReport(viewId);
     setStatus(true);
   } catch (err) {
-    body.innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
+    el('replay-body').innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
   }
 }
 
-function renderViewList({ views }) {
-  const body = el('replay-body');
-  if (!views?.length) {
-    body.innerHTML = '<p class="replay-loading">No Views match.</p>';
+async function runSearch(query) {
+  replay.query = query;
+  const { views } = await fetchJson(`/api/replay?find=${encodeURIComponent(query)}`);
+  replay.views = views ?? [];
+  renderResults();
+}
+
+function renderResults() {
+  const results = el('replay-results');
+  const count = el('replay-count');
+
+  if (!replay.views.length) {
+    count.textContent = '';
+    results.innerHTML = replay.query
+      ? `<p class="replay-loading">Nothing matches “${escapeHtml(replay.query)}”. ` +
+        'Every word has to appear somewhere in the title, author, id or video id — ' +
+        'matching is literal, so a misspelling finds nothing. Try fewer words.</p>'
+      : '<p class="replay-loading">No Views recorded yet.</p>';
     return;
   }
-  body.innerHTML =
+
+  count.textContent = replay.query
+    ? `${replay.views.length} View${replay.views.length === 1 ? '' : 's'} match`
+    : `${replay.views.length} most recent Views`;
+
+  results.innerHTML =
     '<table class="replay-list"><tbody>' +
-    views
+    replay.views
       .map(
         (view) =>
-          `<tr data-view="${escapeHtml(view.viewId)}">` +
+          `<tr data-view="${escapeHtml(view.viewId)}"` +
+          `${view.viewId === replay.selected ? ' class="selected"' : ''}>` +
           `<td class="mono">${escapeHtml(view.viewId.slice(0, 8))}</td>` +
           `<td>${escapeHtml(clockTime(view.startedAtMs))}</td>` +
           `<td class="dim">tab ${view.tabId}</td>` +
@@ -474,8 +498,18 @@ function renderViewList({ views }) {
       )
       .join('') +
     '</tbody></table>';
-  for (const row of body.querySelectorAll('tr[data-view]')) {
-    row.addEventListener('click', () => showReplay(row.dataset.view));
+}
+
+/** Show one View's report, leaving the matches you chose it from on screen. */
+async function openReport(viewId) {
+  replay.selected = viewId;
+  renderResults();
+  el('replay-body').innerHTML = '<p class="replay-loading">…</p>';
+  try {
+    renderReplay(await fetchJson(`/api/replay?view=${encodeURIComponent(viewId)}`));
+    setStatus(true);
+  } catch (err) {
+    el('replay-body').innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -501,6 +535,7 @@ function ms(value) {
 function pos(value) {
   return value === null || value === undefined ? '—' : value.toFixed(1);
 }
+
 
 function renderReplay(report) {
   const view = report.view;
@@ -619,7 +654,7 @@ function renderReplay(report) {
   const body = el('replay-body');
   body.innerHTML = header + events + segments + historyHtml;
   for (const row of body.querySelectorAll('tr[data-view]')) {
-    row.addEventListener('click', () => showReplay(row.dataset.view));
+    row.addEventListener('click', () => openReport(row.dataset.view));
   }
 }
 
@@ -668,13 +703,18 @@ el('replay-item').addEventListener('click', () => {
   if (!state.showingReplay) showReplay().catch(showError);
 });
 
+el('replay-results').addEventListener('click', (e) => {
+  const row = e.target.closest('tr[data-view]');
+  if (row) openReport(row.dataset.view);
+});
+
 el('replay-find').addEventListener('input', debounce((e) => {
-  const query = e.target.value.trim();
-  fetchJson(`/api/replay?find=${encodeURIComponent(query)}`)
-    .then(renderViewList)
-    .catch((err) => {
-      el('replay-body').innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
-    });
+  // A new search is a new question: the report below belongs to the old one.
+  replay.selected = null;
+  el('replay-body').innerHTML = '';
+  runSearch(e.target.value.trim()).catch((err) => {
+    el('replay-results').innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
+  });
 }, 350));
 
 el('refresh-btn').addEventListener('click', () => {

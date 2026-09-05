@@ -39,8 +39,10 @@ frontend is plain JS with no build step, matching `extension/`'s convention.
 - **Replay** — the story behind one View: its header, its Event log with Δwall
   against Δmedia on every step, the Segments it became (stored *and* recomputed
   by the current build), and the History row the popover renders — including
-  which Views were folded into that row. Search by title, author or id, or click
-  any `view_id` cell in any table to jump straight there. The report comes from
+  which Views were folded into that row. Search by title, author or id — every
+  match is listed and stays listed while you read one, so three Views sharing a
+  title can be told apart by opening each in turn. Or click any `view_id` cell in
+  any table to jump straight there. The report comes from
   the `wl-replay` binary, so it is the app's own Segment computation rather than
   a second opinion; if it is not built the panel says so. See
   [`tools/README.md`](../README.md).

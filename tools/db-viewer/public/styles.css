@@ -531,3 +531,37 @@ td.linked {
 [hidden] {
   display: none !important;
 }
+
+/* The results pane keeps its own scroll and a ceiling, so a long list of
+   matches never pushes the report you picked off the bottom of the screen. */
+#replay-results {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+#replay-results:empty {
+  border-bottom: 0;
+}
+
+#replay-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#replay-count {
+  font-size: 0.8rem;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.replay-list tr.selected td {
+  background: rgba(94, 158, 255, 0.18);
+}
+
+.replay-list tr.selected td:first-child::before {
+  content: "→ ";
+  opacity: 0.7;
+}
