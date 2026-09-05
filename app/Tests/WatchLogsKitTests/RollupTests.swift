@@ -70,7 +70,10 @@ struct RollupTests {
         while t < throughMs {
             t += stepMs
             events.append(
-                #"{ "seq": \#(seq), "type": "sample", "t": \#(t), "pos": 0, "playing": true, "visible": true }"#
+                // A real position, advancing with the wall clock: "played straight
+                // through" is exactly what the stall backstop reads off the media
+                // clock, so a fixture claiming it has to move.
+                #"{ "seq": \#(seq), "type": "sample", "t": \#(t), "pos": \#((t - startMs) / 1000), "playing": true, "visible": true }"#
             )
             seq += 1
         }

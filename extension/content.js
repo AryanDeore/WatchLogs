@@ -119,6 +119,12 @@
 
   addEventListener("pagehide", () => helper?.endAll("nav"));
 
+  // A tab Chromium froze and later thawed is the one suspension the page is
+  // actually told about. Everything else — a closed lid, a suspended process —
+  // is only ever inferred from the clock, which is why `noticeWake` runs on the
+  // ordinary beat too rather than only here.
+  document.addEventListener("resume", () => helper?.noticeWake(Date.now()));
+
   function boot() {
     if (captureDisabled) return Promise.resolve(null);
     // A failed boot resets, so the next media event tries again — the worker may
@@ -187,7 +193,7 @@
     observeTitle,
     hello,
   }) {
-    const { apply, initCapture, isAdvancing } = captureModule;
+    const { apply, initCapture, isAdvancing, unwatchedGapMs, SUSPENDED_MS } = captureModule;
     const runId = hello.runId;
     const capture = initCapture(Date.now(), { tabId: hello.tabId ?? 0 });
     // A tab opened in the background starts hidden; without this the first
@@ -217,6 +223,12 @@
     const slotKeys = new WeakMap();
     let nextSlot = 0;
     let sampleTimer = null;
+    /**
+     * The last instant this frame can vouch for: the beat that ran, or the
+     * moment the timer started. `null` whenever no timer is running, because
+     * with nothing advancing there is no clock to lose.
+     */
+    let lastHeartbeatAt = null;
     let metaTimer = null;
     let writing = Promise.resolve();
 
@@ -262,11 +274,12 @@
       }
     }
 
-    return { handle, note, setVisible, endAll };
+    return { handle, note, setVisible, endAll, noticeWake };
 
     // --- What just happened -----------------------------------------------------
 
     function handle(fact) {
+      noticeWake(fact.at);
       const entry = ensureView(fact.media, fact);
       if (!entry) return;
 
@@ -283,6 +296,7 @@
     }
 
     function setVisible(visible) {
+      noticeWake(Date.now());
       const viewId = anyOpenViewId();
       apply(capture, {
         type: visible ? "SHOW" : "HIDE",
@@ -305,6 +319,10 @@
      * View is recovered from its last `sample` on the next browser run.
      */
     function endAll(reason) {
+      // Before anything is stamped at "now": if the frame has been asleep, now
+      // is hours past the last thing it actually saw, and ending the View here
+      // would bank every one of them.
+      noticeWake(Date.now());
       // A wait still running has its say now: what it is holding is the last
       // thing anyone will ever learn about this View.
       if (metaTimer !== null) reportMetadata();
@@ -319,6 +337,12 @@
         });
       }
       persistAll(true);
+      // Nothing is tracked any more, so this stops the beat and drops the
+      // heartbeat anchor with it. Without that, a page coming back out of the
+      // back/forward cache — routine on Gecko — meets a timer still holding an
+      // anchor from before it was cached, and reads the cached stretch as a
+      // suspension with no players left to account for it.
+      ensureTimer();
     }
 
     // --- The 5-second heartbeat --------------------------------------------------
@@ -327,14 +351,76 @@
       const playing = [...tracked.keys()].some((media) => isAdvancing(media));
       if (playing && sampleTimer === null) {
         sampleTimer = setInterval(tick, SAMPLE_MS);
+        lastHeartbeatAt = Date.now();
       } else if (!playing && sampleTimer !== null) {
         clearInterval(sampleTimer);
         sampleTimer = null;
+        lastHeartbeatAt = null;
       }
+    }
+
+    /**
+     * Close the books on wall clock this frame was not running for.
+     *
+     * The one thing the Extension cannot observe is its own absence — a closed
+     * lid, a frozen tab, a renderer that never got to fire `pause`. Nothing
+     * marks the start of it and the beat that resumes afterwards looks exactly
+     * like the beat before, so left alone a four-hour nap arrives at the App as
+     * four hours of watching.
+     *
+     * `unwatchedGapMs` is what separates that from a tab merely beating slowly.
+     * Where it says a real stretch went unwatched, every open View is paused at
+     * the last beat that actually ran — never at wake time, which would bank the
+     * whole gap — and whatever is genuinely still moving is played again now. The
+     * uncertain middle counts for nobody, the same conservative boundary the App
+     * draws for a heartbeat that reveals a change it never saw.
+     *
+     * Safe to call from anywhere and as often as anything likes: with no timer
+     * running, or a gap the players can account for, it does nothing.
+     */
+    function noticeWake(at) {
+      if (lastHeartbeatAt === null || !(at > lastHeartbeatAt)) return;
+
+      const players = [];
+      for (const [media, entry] of tracked) {
+        const beforeSleep = capture.lastSampleSnapshot[entry.viewId];
+        if (!isOpen(entry.viewId) || !beforeSleep) continue;
+        players.push({
+          posThen: beforeSleep.pos,
+          posNow: media.currentTime,
+          rate: media.playbackRate,
+        });
+      }
+      if (unwatchedGapMs({ at, since: lastHeartbeatAt, players }) <= SUSPENDED_MS) return;
+
+      // Moved before the Events are written, so a `PLAY` here cannot be read as
+      // a second suspension by whatever runs next.
+      const confirmedAt = lastHeartbeatAt;
+      lastHeartbeatAt = at;
+
+      for (const entry of tracked.values()) {
+        if (!isOpen(entry.viewId)) continue;
+        apply(capture, {
+          type: "PAUSE",
+          at: confirmedAt,
+          viewId: entry.viewId,
+          // The position at that beat, not the one on screen now: the media may
+          // have crept forward during the gap, and where it got to is not
+          // something this frame watched.
+          pos: capture.lastSampleSnapshot[entry.viewId]?.pos,
+        });
+      }
+      for (const [media, entry] of tracked) {
+        if (!isOpen(entry.viewId) || !isAdvancing(media)) continue;
+        apply(capture, { type: "PLAY", at, viewId: entry.viewId, pos: media.currentTime });
+        entry.pos = media.currentTime;
+      }
+      persistAll(true);
     }
 
     function tick() {
       const at = Date.now();
+      noticeWake(at);
       const visible = document.visibilityState === "visible";
       for (const [media, entry] of [...tracked]) {
         if (isOpen(entry.viewId)) refresh(media, { at, pos: media.currentTime });
@@ -359,6 +445,7 @@
           visible,
         });
       }
+      lastHeartbeatAt = at;
       persistAll(true);
       ensureTimer();
     }
