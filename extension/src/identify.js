@@ -112,6 +112,29 @@ export function identifyingSrc(mediaSrc) {
 }
 
 /**
+ * Has this element been handed different media than its View was opened for?
+ *
+ * YouTube's Shorts feed reuses one player: scrolling to the next Short points
+ * the element at new media a beat *before* the router puts the new id in the
+ * address bar. In that gap `navigator.mediaSession` already describes the next
+ * Short while `videoIdSourceFor` still reads the last one, so a metadata report
+ * lands the next Short's title on the View that is still open for the previous
+ * one — which is how a 50-second watch ends up filed under a video the user
+ * never saw.
+ *
+ * `currentSrc` is the tell the address bar cannot give: a different resource is
+ * a different video, whatever the URL still says. Compared raw rather than
+ * through `identifyingSrc`, because the `blob:` URL an MSE player attaches is
+ * useless for telling two *players* apart but exact for telling two *videos*
+ * apart in one element. A player that had no source when its View opened has
+ * nothing to compare against, and is not a swap.
+ */
+export function isMediaSwap({ openedWith, current }) {
+  if (!openedWith || !current) return false;
+  return openedWith !== current;
+}
+
+/**
  * Is this player sitting in someone else's page? True for a cross-site iframe,
  * and for a frame whose ancestor we cannot read (which only happens when the
  * ancestor is a different origin).

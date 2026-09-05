@@ -159,10 +159,30 @@ private struct VideoRow: View {
 
                 Spacer(minLength: 8)
 
-                Text(formatWatchedTime(milliseconds: video.watchedMs))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                // A Flush is only ever as fresh as the Extension's last
+                // heartbeat (up to 5s while a tab is lively), so the stored
+                // `watchedMs` alone would sit still between them even though
+                // playback hasn't. `TimelineView` re-renders this once a
+                // second and adds real elapsed time on top of that stored
+                // baseline — a live-ticking number, not a frozen one, for as
+                // long as `isPlaying` says a Flush could plausibly still be
+                // on its way. `extrapolatedWatchedMs` itself caps how much of
+                // that elapsed time it's willing to add — see its doc comment
+                // for why `isPlaying` alone isn't a tight enough signal to
+                // extrapolate against.
+                if video.isPlaying {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(formatPreciseWatchedTime(milliseconds: extrapolatedWatchedMs(video, at: context.date)))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                } else {
+                    Text(formatPreciseWatchedTime(milliseconds: video.watchedMs))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
             }
 
             if let coverage = video.coverage {
@@ -227,4 +247,32 @@ private let clockTimeFormatter: DateFormatter = {
 
 private func clockTime(_ date: Date) -> String {
     clockTimeFormatter.string(from: date)
+}
+
+/// `isPlaying` carries its own 20s "maybe still buffering" grace
+/// (`EventStore.playingGraceMs`), which exists to stop a brief stall from
+/// flickering the row off the top of the list. That grace has no way to
+/// tell an actual stall apart from an actual pause, so it stays `true` for
+/// up to 20s after either one — and this row, trusting it, would otherwise
+/// keep counting real wall-clock seconds the whole time, against a total
+/// that already stopped growing the instant the pause happened.
+///
+/// Capping the extrapolation here — independently of what `isPlaying`
+/// says — bounds that to a few phantom seconds instead of up to 20: past
+/// `maxExtrapolationMs` past the last real sample, the row holds still
+/// rather than keep guessing, and waits for the next Flush to say what
+/// actually happened. A real, still-playing View never notices the cap —
+/// its next sample lands well inside the window and pushes `lastWatchedAt`
+/// forward again.
+private let maxExtrapolationMs = 8_000
+
+/// `video.watchedMs` plus whatever real time has passed since the last
+/// sample the App actually has (`lastWatchedAt`), up to `maxExtrapolationMs`
+/// — assuming, as `isPlaying` already does, that playback hasn't stopped in
+/// the meantime. Never called for a row that isn't `isPlaying`, so there's
+/// no "the video paused and this kept climbing anyway" case within a single
+/// `data` snapshot; the next refresh corrects it either way.
+private func extrapolatedWatchedMs(_ video: HistoryVideo, at now: Date) -> Int {
+    let elapsedMs = Int(max(0, now.timeIntervalSince(video.lastWatchedAt)) * 1000)
+    return video.watchedMs + min(elapsedMs, maxExtrapolationMs)
 }

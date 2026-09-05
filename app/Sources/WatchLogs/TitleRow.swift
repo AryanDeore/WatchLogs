@@ -66,50 +66,33 @@ struct TitleRow: View {
             : "Refresh: no extension paired yet — copy the pairing string into the extension"
     }
 
-    /// How long to keep polling for the Extension's re-flush before giving up.
-    /// A throttled tab can take up to its 30s sweep to notice the hint, but a
-    /// button that stayed disabled that long would read as broken — 5s covers
-    /// the common "tab still lively" case and leaves the rest to the
-    /// popover's own periodic catch-up.
-    private static let pollAttempts = 20
-    private static let pollInterval: Duration = .milliseconds(250)
-
-    /// Arms the hint, then polls the store directly (not `data`, which is a
-    /// snapshot this view doesn't get to refresh) for a Flush newer than the
-    /// one on hand.
-    ///
-    /// A bounded `for` loop over `Task.sleep`, not a repeating `Timer`: a
-    /// `Timer` scheduled on the default run loop can go quiet while AppKit is
-    /// running the popover's own event-tracking loop and never come back,
-    /// which left this button stuck mid-spin, disabled, with no way to retry.
-    /// `Task.sleep` runs on Swift Concurrency's own clock and the loop's
-    /// iteration cap is the timeout — there is no "the timer forgot to fire"
-    /// failure mode to have.
+    /// Arms the hint via `FlushCatchUp` and reflects what it finds: a
+    /// checkmark if a newer Flush landed, back to idle either way after.
     private func performRefresh() {
-        guard isPaired, refreshPhase != .inFlight, let before = data.lastFlushAt else { return }
+        guard refreshPhase != .inFlight else { return }
         refreshPhase = .inFlight
-        transport.requestFlushAgain()
 
         refreshTask?.cancel()
-        refreshTask = Task { @MainActor in
-            for _ in 0..<Self.pollAttempts {
-                try? await Task.sleep(for: Self.pollInterval)
-                if Task.isCancelled { return }
-
-                guard let landed = try? transport.store.lastFlushAt(), landed > before else { continue }
-                refreshPhase = .confirmed
-                // The store has new data now, but `model` isn't watching it —
-                // nothing about a Flush landing touches a tracked property on
-                // its own. Without this, the checkmark shows "up to date"
-                // while History/Services/Trends keep showing whatever they
-                // last rendered, until the popover's own 5s timer or a pane
-                // switch happens to force a re-render.
-                model.markDataChanged()
-                try? await Task.sleep(for: .milliseconds(1_200))
-                if !Task.isCancelled, refreshPhase == .confirmed { refreshPhase = .idle }
+        refreshTask = FlushCatchUp.request(transport: transport) { caughtUp in
+            guard caughtUp else {
+                refreshPhase = .idle
                 return
             }
-            if !Task.isCancelled { refreshPhase = .idle }
+            refreshPhase = .confirmed
+            // The store has new data now, but `model` isn't watching it —
+            // nothing about a Flush landing touches a tracked property on
+            // its own. Without this, the checkmark shows "up to date" while
+            // History/Services/Trends keep showing whatever they last
+            // rendered, until the popover's own 5s timer or a pane switch
+            // happens to force a re-render.
+            model.markDataChanged()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1_200))
+                if refreshPhase == .confirmed { refreshPhase = .idle }
+            }
         }
+        // Nothing paired to ask — `request` armed nothing and will never
+        // call back, so this button has to reset itself.
+        if refreshTask == nil { refreshPhase = .idle }
     }
 }

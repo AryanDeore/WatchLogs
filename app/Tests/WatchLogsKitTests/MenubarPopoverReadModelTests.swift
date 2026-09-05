@@ -438,14 +438,14 @@ struct MenubarPopoverReadModelTests {
         #expect(row.watchedMs == 6_000 + 135_000)
     }
 
-    @Test("History leaves a generic-fallback id alone when its own URL names no video to recover")
-    func historyKeepsUnrecoverableGenericIdAsIs() throws {
+    @Test("History leaves out a generic-fallback View that neither its own URL nor its tab can name")
+    func historyDropsUnidentifiableGenericView() throws {
         let start = local(2024, 1, 1, 12).epochMillis
         let store = try EventStore(path: ":memory:")
         _ = try store.record(flush(sentAt: start - 1, views: []), serverTime: start - 1)
         // A homepage hover-preview: the page never named a video at all, so
-        // there is nothing in its URL to recover — this id stays exactly what
-        // it was.
+        // there is nothing in its URL to recover — and nothing follows in its
+        // tab to recover it from either.
         let preview = FlushView(
             viewId: "preview", service: "youtube.com", videoId: "sha1:deadbeef",
             url: "https://www.youtube.com/", tabId: 1, startedAt: start, open: false, events: [
@@ -454,8 +454,14 @@ struct MenubarPopoverReadModelTests {
             ])
         _ = try store.record(flush(sentAt: start + 5_000, views: [preview]), serverTime: start + 5_000)
 
-        let videos = try #require(store.history(for: .today, now: Date(epochMillis: start + 5_000)).first?.videos)
-        #expect(videos.map(\.videoId) == ["sha1:deadbeef"])
+        // Which video was being previewed is unknowable after the fact, and
+        // every preview on that page shares its one hash — so the View is left
+        // out of History rather than shown as a video it is not, or folded in
+        // with the next unrelated preview.
+        let videos = try store.history(for: .today, now: Date(epochMillis: start + 5_000)).first?.videos ?? []
+        #expect(videos.isEmpty)
+        // Only the video row is missing: the time itself is still watched time.
+        #expect(try store.totals(in: DateRange(startMs: start, endMs: start + 5_000)).watchedMs == 5_000)
     }
 
     @Test("readTimeVideoId recovers a YouTube video's real id from its URL, only for a generic-fallback id")

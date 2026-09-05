@@ -356,6 +356,55 @@ test(
 );
 
 test(
+  "a player handed the next video before the address bar moves keeps the name it was opened with",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      // The Shorts feed, in miniature: one player, one URL, and the next video
+      // pushed into the element a beat before the router would rename the page.
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: "The Short Being Watched", artist: "Its Channel" });
+        return document.getElementById("v").play();
+      });
+      // The name is on the View from the moment it opens — mediaSession was
+      // already answering — so there is no metadataChange to wait for here.
+      await waitUntil(
+        () => viewsTagged(server, tag).some((view) => view.title === "The Short Being Watched"),
+        { timeoutMs: 15_000, message: "expected the View to be named before the swap" },
+      );
+
+      // The feed moves on: new media in the same element, and the page's
+      // now-playing block already describing it.
+      await page.evaluate(async () => {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: "The Next Short", artist: "Another Channel" });
+        const video = document.getElementById("v");
+        video.src = "/fixtures/short.webm";
+        await video.play();
+      });
+      // Long enough for the 500 ms wait, a sample beat and a Flush to have
+      // carried the wrong name across, if it were going to.
+      await page.waitForTimeout(8000);
+
+      const named = eventsTagged(server, tag)
+        .filter((event) => event.type === "metadataChange")
+        .map((event) => event.changed.title);
+      assert.equal(
+        named.includes("The Next Short"),
+        false,
+        `the next video's name must not land on this View, got ${JSON.stringify(named)}`,
+      );
+      const titles = new Set(viewsTagged(server, tag).map((view) => view.title));
+      assert.deepEqual([...titles], ["The Short Being Watched"]);
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test(
   "a livestream turning into its own replay is a metadataChange, not a new View",
   { timeout: 30_000 },
   async () => {

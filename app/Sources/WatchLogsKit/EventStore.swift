@@ -1131,6 +1131,111 @@ public final class EventStore: @unchecked Sendable {
     /// beat (`content.js` SAMPLE_MS = 5s) plus room for Flush latency.
     private static let playingGraceMs = 20_000
 
+    /// How long after an orphan View's last watched moment its own tab may
+    /// still name the video that time belongs to. The two gaps measured on a
+    /// real database were 4.0 s and 5.1 s between a placeholder View's last
+    /// watched Segment and the identified View that followed it, so this leaves
+    /// comfortable room above them without reaching so far that an unrelated
+    /// later click in the same tab could claim the time.
+    private static let orphanAttributionWindowMs = 15_000
+
+    /// Where each *orphan* View's watched time really belongs.
+    ///
+    /// A YouTube video starts playing seconds before YouTube's own router puts
+    /// `?v=` in the address bar, so `content.js` opens the View under the
+    /// generic page-address hash. `readTimeVideoId` rescues most of those from
+    /// the View's own `url`, but a View that began on the bare home feed has no
+    /// id anywhere in its own record to rescue — and every such View on that
+    /// path shares one hash, so grouping them by id piles the opening seconds
+    /// of unrelated videos into a single row wearing whichever title landed
+    /// there last.
+    ///
+    /// The tab knows what the View does not: moments later that same tab opens
+    /// the real video's View. So an orphan is attributed to the nearest later
+    /// View in its own tab that names a real YouTube video. `previous_view_id`
+    /// is deliberately not the mechanism here — the stored chain often points
+    /// at a dead-end View that never accumulates watched time of its own, while
+    /// the View actually carrying the watch is reachable only by tab and clock.
+    ///
+    /// An orphan with no such successor — a home-feed hover preview the user
+    /// never clicked into — is reported as `unresolved` so the caller can drop
+    /// it. Which video was previewed is unknowable after the fact, and letting
+    /// it fold in with the next unrelated orphan sharing that hash is exactly
+    /// the mislabelling this pass exists to end. Only which *video row* the
+    /// time appears under changes: the Day's totals never key on video identity
+    /// and are untouched.
+    private func orphanAttribution(startMs: Int, endMs: Int) throws -> (real: [String: String], unresolved: Set<String>) {
+        struct Candidate {
+            var viewId: String
+            var videoId: String
+            var isYouTube: Bool
+            var tabId: Int
+            var startedAt: Int
+            /// The end of this View's last watched Segment — `nil` when it
+            /// never accumulated any, which is the dead-end shape above.
+            var watchedEnd: Int?
+            /// A generic page-address hash nothing could recover a video from.
+            var isGeneric: Bool { videoId.hasPrefix("sha1:") }
+        }
+
+        var byTab: [Int: [Candidate]] = [:]
+        var orphans: [Candidate] = []
+        try database.query(
+            """
+            SELECT v.view_id, v.video_id, v.url, v.service, v.tab_id, v.started_at_ms,
+                   (SELECT MAX(s.wall_end_ms) FROM segments s
+                     WHERE s.view_id = v.view_id AND s.kind = 'watched')
+            FROM views v
+            WHERE (v.started_at_ms >= ? AND v.started_at_ms < ?)
+               OR EXISTS (SELECT 1 FROM segments s WHERE s.view_id = v.view_id
+                          AND s.wall_end_ms > ? AND s.wall_start_ms < ?)
+            ORDER BY v.started_at_ms
+            """,
+            // Successors are looked for past the Day's own end: a video clicked
+            // in the Day's last seconds is only named after it.
+            [.int(startMs), .int(endMs + Self.orphanAttributionWindowMs), .int(startMs), .int(endMs)]
+        ) { row in
+            let candidate = Candidate(
+                viewId: row.text(0),
+                videoId: Self.readTimeVideoId(stored: row.text(1), url: row.text(2)),
+                isYouTube: ServiceDisplayBucket.from(service: row.text(3)) == .youtube,
+                tabId: row.int(4),
+                startedAt: row.int(5),
+                watchedEnd: row.optionalInt(6)
+            )
+            byTab[candidate.tabId, default: []].append(candidate)
+            // Only YouTube routes a video's id through its address bar, so only
+            // there does a generic id mean "identity lost". Everywhere else it
+            // is the honest, intended identity of an Adapter-less page.
+            if candidate.isYouTube, candidate.isGeneric {
+                orphans.append(candidate)
+            }
+        }
+        guard !orphans.isEmpty else { return ([:], []) }
+
+        var real: [String: String] = [:]
+        var unresolved: Set<String> = []
+        for orphan in orphans {
+            // A View that never played has no watched time to place.
+            guard let watchedEnd = orphan.watchedEnd else { continue }
+            // Rows arrive oldest-first, so the first match is the nearest one.
+            // A successor may overlap the orphan's own tail — both keep sampling
+            // for a beat — hence "started after the orphan started", measured
+            // for lateness against the orphan's last watched moment.
+            let successor = byTab[orphan.tabId]?.first { candidate in
+                candidate.isYouTube && !candidate.isGeneric
+                    && candidate.startedAt > orphan.startedAt
+                    && candidate.startedAt <= watchedEnd + Self.orphanAttributionWindowMs
+            }
+            if let successor {
+                real[orphan.viewId] = successor.videoId
+            } else {
+                unresolved.insert(orphan.viewId)
+            }
+        }
+        return (real, unresolved)
+    }
+
     private func historyVideos(startMs: Int, endMs: Int, isOpenDay: Bool) throws -> [HistoryVideo] {
         // Keyed by `display bucket \0 video id`: two Views of the same video —
         // a re-watch, a scroll back to an earlier Short, a re-mounted player —
@@ -1153,6 +1258,7 @@ public final class EventStore: @unchecked Sendable {
             var intervals: [(Double, Double)] = []
         }
         var groups: [String: Group] = [:]
+        let attribution = try orphanAttribution(startMs: startMs, endMs: endMs)
         try database.query(
             """
             SELECT v.view_id, v.service, v.content_format, v.embedded, v.title, v.author,
@@ -1165,8 +1271,11 @@ public final class EventStore: @unchecked Sendable {
             [.int(startMs), .int(endMs)]
         ) { row in
             let viewId = row.text(0)
+            // An orphan nothing could place is left out of History entirely
+            // rather than shown as a video it is not.
+            guard !attribution.unresolved.contains(viewId) else { return }
             let service = row.text(1)
-            let videoId = Self.readTimeVideoId(stored: row.text(15), url: row.text(14))
+            let videoId = attribution.real[viewId] ?? Self.readTimeVideoId(stored: row.text(15), url: row.text(14))
             let startedAt = row.int(6)
             let key = "\(ServiceDisplayBucket.from(service: service))\u{0}\(videoId)"
             var group = groups[key] ?? Group(

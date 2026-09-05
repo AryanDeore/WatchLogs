@@ -9,6 +9,7 @@ struct PopoverView: View {
     @State private var chromeHeight: CGFloat = 0
     @State private var paneContentHeight: CGFloat = 0
     @State private var tick = Date()
+    @State private var openCatchUpTask: Task<Void, Never>?
 
     private static let width: CGFloat = 380
     /// Floor: below this a near-empty pane (Today with one view) would shrink
@@ -66,7 +67,21 @@ struct PopoverView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .animation(.easeOut(duration: 0.18), value: model.settingsOpen)
         .animation(.easeOut(duration: 0.18), value: windowHeight)
-        .onAppear { _ = tick }
+        .onAppear {
+            _ = tick
+            // Opening the popover shows whatever is already resolved
+            // instantly — never delayed for this — and separately asks every
+            // paired Extension to flush right now (issue #35 §3), so a video
+            // you just switched away from doesn't sit buffered for up to 30s.
+            // If one answers in time, `markDataChanged` below live-updates
+            // the popover already on screen instead of making you notice it
+            // was stale.
+            openCatchUpTask?.cancel()
+            openCatchUpTask = FlushCatchUp.request(transport: transport) { caughtUp in
+                if caughtUp { model.markDataChanged() }
+            }
+        }
+        .onDisappear { openCatchUpTask?.cancel() }
         // Refresh open-Day data periodically so the "still open" total keeps up
         // with real time without waiting for a Flush to arrive.
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { tick = $0 }

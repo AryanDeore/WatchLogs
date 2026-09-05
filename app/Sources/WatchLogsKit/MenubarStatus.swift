@@ -70,4 +70,16 @@ public enum WatchedTimeLine {
         if minutes < 60 { return "\(minutes)m" }
         return String(format: "%dh %02dm", minutes / 60, minutes % 60)
     }
+
+    /// Like `duration`, but keeps the seconds at the minute scale too —
+    /// `1m23s` rather than `1m`. For one video's own watched time (the
+    /// History row), where losing up to 59s of precision reads as wrong in a
+    /// way it doesn't for a Day/Service/range total; those keep `duration`.
+    public static func preciseDuration(milliseconds: Int) -> String {
+        let seconds = Totals.seconds(max(0, milliseconds))
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m\(seconds % 60)s" }
+        return String(format: "%dh %02dm", minutes / 60, minutes % 60)
+    }
 }

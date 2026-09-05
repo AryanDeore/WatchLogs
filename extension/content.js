@@ -410,6 +410,9 @@
         key: header.videoId,
         pos: fact.pos || 0,
         disambiguate,
+        // The media this View is about, so a player handed a different video
+        // before the router notices can be caught — see `reportMetadata`.
+        src: media.currentSrc || "",
       };
       if (!sharing) apply(capture, { type: "OPEN", at: fact.at, viewId: entry.viewId, view: header });
       tracked.set(media, entry);
@@ -443,8 +446,18 @@
         // ad player would open a second View against the video that replaced it.
         for (const [other, otherEntry] of [...tracked]) {
           if (otherEntry.viewId !== entry.viewId) continue;
-          tracked.set(other, { ...otherEntry, viewId, key: header.videoId, pos: 0 });
+          tracked.set(other, {
+            ...otherEntry,
+            viewId,
+            key: header.videoId,
+            pos: 0,
+            src: other.currentSrc || "",
+          });
         }
+      } else if (!entry.src) {
+        // A player built before its media was attached: the first source it is
+        // given is the one this View is about.
+        entry.src = media.currentSrc || "";
       }
       scheduleMetadata();
     }
@@ -513,6 +526,11 @@
      * already the new View's own. A `contentFormat` that moved on its own — a
      * livestream turning into the replay of itself, same id — is reported here
      * and the View carries straight on.
+     *
+     * A player whose element has already been handed the next video is skipped:
+     * its id is unchanged only because the router has not caught up yet, and
+     * what the page says now names the video coming, not the one being watched.
+     * The View keeps the name it was opened with until its own boundary lands.
      */
     function reportMetadata() {
       clearTimeout(metaTimer);
@@ -522,6 +540,9 @@
 
       for (const [media, entry] of [...tracked]) {
         if (!isOpen(entry.viewId) || reported.has(entry.viewId)) continue;
+        // Read live rather than remembered: this report may have been scheduled
+        // before the element was handed the next video.
+        if (meta.isMediaSwap({ openedWith: entry.src, current: media.currentSrc })) continue;
         reported.add(entry.viewId);
 
         const header = describe(media, entry);
