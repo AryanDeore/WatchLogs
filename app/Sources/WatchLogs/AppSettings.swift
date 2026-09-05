@@ -30,8 +30,12 @@ final class AppSettings {
         }
     }
     
-    // Icon always blinks while playing (no toggle needed)
-    var blinkIconWhilePlaying: Bool { true }
+    var blinkIconWhilePlaying: Bool {
+        didSet {
+            UserDefaults.standard.set(blinkIconWhilePlaying, forKey: Keys.blinkIconWhilePlaying)
+            onIconSettingsChanged?()
+        }
+    }
     
     var blinkSeparator: Bool {
         didSet {
@@ -58,6 +62,7 @@ final class AppSettings {
         }
         
         self.blinkSeparator = UserDefaults.standard.bool(forKey: Keys.blinkSeparator)
+        self.blinkIconWhilePlaying = UserDefaults.standard.bool(forKey: Keys.blinkIconWhilePlaying)
     }
     
     // MARK: - Types
@@ -69,9 +74,9 @@ final class AppSettings {
         
         var label: String {
             switch self {
-            case .iconOnly: return "Icon only"
+            case .iconOnly: return "Icon"
             case .iconAndTime: return "Icon + watched time"
-            case .timeOnly: return "Watched time only"
+            case .timeOnly: return "Watched time"
             }
         }
     }

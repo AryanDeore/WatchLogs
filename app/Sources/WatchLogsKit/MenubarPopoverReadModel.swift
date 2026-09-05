@@ -75,7 +75,7 @@ public enum MenubarPane: String, CaseIterable, Equatable, Sendable {
     public var title: String {
         switch self {
         case .history: "History"
-        case .byService: "By Service"
+        case .byService: "Services"
         case .trends: "Trends"
         }
     }

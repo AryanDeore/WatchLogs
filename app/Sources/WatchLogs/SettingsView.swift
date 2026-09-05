@@ -43,29 +43,14 @@ struct SettingsView: View {
                         get: { settings.iconDisplay },
                         set: { settings.iconDisplay = $0 }
                     )) {
-                        Label {
-                            Text("Icon only")
-                        } icon: {
-                            LogPlayMarkView()
-                        }
-                        .tag(AppSettings.IconDisplay.iconOnly)
+                        Text("Icon")
+                            .tag(AppSettings.IconDisplay.iconOnly)
                         
-                        Label {
-                            Text("Icon + time")
-                        } icon: {
-                            HStack(spacing: 3) {
-                                LogPlayMarkView()
-                                Text("1h05").font(.caption2)
-                            }
-                        }
-                        .tag(AppSettings.IconDisplay.iconAndTime)
+                        Text("Icon + watched time")
+                            .tag(AppSettings.IconDisplay.iconAndTime)
                         
-                        Label {
-                            Text("Time only")
-                        } icon: {
-                            Text("1h05").font(.caption2)
-                        }
-                        .tag(AppSettings.IconDisplay.timeOnly)
+                        Text("Watched time")
+                            .tag(AppSettings.IconDisplay.timeOnly)
                     }
                     .help("Choose what appears in the menubar.")
                     
@@ -81,13 +66,15 @@ struct SettingsView: View {
                         .help("Format for time over one hour.")
                     }
                     
-                    if settings.iconDisplay == .iconAndTime && settings.timeSeparator == .colon {
-                        Toggle("Blink separator", isOn: Binding(
-                            get: { settings.blinkSeparator },
-                            set: { settings.blinkSeparator = $0 }
+                    if settings.iconDisplay != .timeOnly {
+                        Toggle("Blink icon while playing", isOn: Binding(
+                            get: { settings.blinkIconWhilePlaying },
+                            set: { settings.blinkIconWhilePlaying = $0 }
                         ))
-                        .help("The colon blinks at 1 Hz while counting.")
+                        .help("The icon pulses with a breathing animation when a video is playing.")
                     }
+                    
+
                 }
                 .padding(.bottom, -6)
                 
@@ -161,15 +148,15 @@ struct SettingsView: View {
             
             // Author footer, pinned to the bottom
             VStack(spacing: 6) {
-                HStack(spacing: 12) {
-                    Text("WatchLogs v\(version) (\(buildNumber))")
+                HStack(spacing: 4) {
+                    Text("Made by Aryan")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     
-                    Link("GitHub", destination: URL(string: "https://github.com/AryanDeore/WatchLogs")!)
+                    Link("Author", destination: URL(string: "https://www.aryandeore.ai/")!)
                         .font(.caption)
                     
-                    Link("Author", destination: URL(string: "https://github.com/AryanDeore")!)
+                    Link("GitHub", destination: URL(string: "https://github.com/AryanDeore")!)
                         .font(.caption)
                 }
             }
