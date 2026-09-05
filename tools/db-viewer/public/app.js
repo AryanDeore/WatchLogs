@@ -17,6 +17,7 @@ const state = {
   knownRowIds: new Set(), // for new-row flash highlighting
   live: true,
   pollHandle: null,
+  showingLint: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -63,6 +64,7 @@ async function refreshTableList() {
 }
 
 async function loadTable(name) {
+  hideLint();
   state.currentTable = name;
   state.page = 0;
   state.filters = {};
@@ -319,6 +321,92 @@ function showError(err) {
   setStatus(false);
 }
 
+// --- Lint -------------------------------------------------------------------
+// The same checks the `tools/lint` CLI runs, rendered here so a Flush landing
+// badly is visible in the same place you were already watching it land.
+
+const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
+
+async function refreshLint() {
+  const report = await fetchJson('/api/lint');
+  const total = report.results.reduce((n, r) => n + r.findings.length, 0);
+  el('lint-badge').textContent = formatCount(total);
+  el('lint-badge').classList.toggle(
+    'bad',
+    report.results.some((r) => r.severity === 'high' && r.findings.length),
+  );
+  if (state.showingLint) renderLint(report);
+  setStatus(true);
+}
+
+function renderLint(report) {
+  const panel = el('lint-panel');
+  const found = report.results
+    .filter((result) => result.findings.length || result.error)
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+
+  if (!found.length) {
+    panel.innerHTML = '<p class="lint-clean">Nothing to report — every check passed.</p>';
+    return;
+  }
+
+  const share = report.totalMs
+    ? `${Math.round(report.implicatedMs / 60000)} min of ${Math.round(report.totalMs / 60000)} min recorded ` +
+      `(${Math.round((report.implicatedMs / report.totalMs) * 100)}%) sits in a Segment some check flags`
+    : '';
+
+  panel.innerHTML =
+    `<p class="lint-summary">${share}</p>` +
+    found
+      .map((result) => {
+        const cost = result.costMs ? ` · ${(result.costMs / 60000).toFixed(1)} min in doubt` : '';
+        const body = result.error
+          ? `<p class="lint-error">could not run: ${escapeHtml(result.error)}</p>`
+          : `<ul class="lint-findings">${result.findings
+              .slice(0, 50)
+              .map((finding) => `<li>${escapeHtml(finding.summary)}</li>`)
+              .join('')}${
+              result.findings.length > 50
+                ? `<li class="lint-more">… and ${result.findings.length - 50} more</li>`
+                : ''
+            }</ul>`;
+        return (
+          `<section class="lint-check ${result.severity}">` +
+          `<h3><span class="lint-sev">${result.severity}</span> ${escapeHtml(result.title)}` +
+          `<span class="lint-count">${result.findings.length} found${cost}</span></h3>` +
+          `<p class="lint-why">${escapeHtml(result.why)}</p>${body}</section>`
+        );
+      })
+      .join('');
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
+
+async function showLint() {
+  state.showingLint = true;
+  state.currentTable = null;
+  el('table-title').textContent = 'Lint — what the data must never say';
+  el('data-table').hidden = true;
+  el('pager').hidden = true;
+  el('empty-state').style.display = 'none';
+  el('lint-panel').hidden = false;
+  el('global-filter').disabled = true;
+  el('lint-item').classList.add('active');
+  renderTableList();
+  await refreshLint();
+}
+
+/** Leaving the lint panel for an ordinary table view. */
+function hideLint() {
+  state.showingLint = false;
+  el('data-table').hidden = false;
+  el('pager').hidden = false;
+  el('lint-panel').hidden = true;
+  el('lint-item').classList.remove('active');
+}
+
 // --- Polling ---------------------------------------------------------------
 
 function startPolling() {
@@ -326,6 +414,7 @@ function startPolling() {
   state.pollHandle = setInterval(async () => {
     try {
       await refreshTableList();
+      await refreshLint();
       if (state.currentTable) await refreshRows();
     } catch (err) {
       showError(err);
@@ -346,8 +435,13 @@ el('live-toggle').addEventListener('change', (e) => {
   else stopPolling();
 });
 
+el('lint-item').addEventListener('click', () => {
+  if (!state.showingLint) showLint().catch(showError);
+});
+
 el('refresh-btn').addEventListener('click', () => {
   refreshTableList().catch(showError);
+  refreshLint().catch(showError);
   if (state.currentTable) refreshRows().catch(showError);
 });
 
@@ -379,5 +473,6 @@ el('next-page').addEventListener('click', () => {
 // --- Boot ------------------------------------------------------------------
 
 refreshTableList()
+  .then(() => refreshLint())
   .then(() => startPolling())
   .catch(showError);

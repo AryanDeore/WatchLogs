@@ -318,3 +318,92 @@ tr.flash td {
 }
 #pager-controls button:disabled { opacity: 0.4; cursor: default; }
 #pager-controls button:not(:disabled):hover { background: rgba(255, 255, 255, 0.08); }
+
+/* --- Lint panel ----------------------------------------------------------- */
+/* Findings are prose, not rows: each one is a sentence about something that
+   happened, so it is set to read rather than to scan. */
+
+#tool-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  border-bottom: 1px solid var(--border, #2a2a2a);
+}
+
+.badge.bad {
+  background: #b3261e;
+  color: #fff;
+}
+
+#lint-panel {
+  padding: 16px 20px 32px;
+  overflow-y: auto;
+  max-width: 70rem;
+}
+
+.lint-summary {
+  margin: 0 0 20px;
+  font-weight: 600;
+}
+
+.lint-clean {
+  opacity: 0.7;
+}
+
+.lint-check {
+  margin: 0 0 26px;
+  padding-left: 12px;
+  border-left: 3px solid #6b6b6b;
+}
+
+.lint-check.high { border-left-color: #b3261e; }
+.lint-check.medium { border-left-color: #b58900; }
+
+.lint-check h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lint-sev {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #333;
+}
+
+.lint-check.high .lint-sev { background: #b3261e; color: #fff; }
+.lint-check.medium .lint-sev { background: #b58900; color: #000; }
+
+.lint-count {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 0.8rem;
+  opacity: 0.65;
+}
+
+.lint-why {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  opacity: 0.7;
+  max-width: 62rem;
+}
+
+.lint-findings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.lint-more,
+.lint-error {
+  opacity: 0.6;
+  font-style: italic;
+}

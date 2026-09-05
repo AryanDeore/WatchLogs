@@ -10,48 +10,20 @@
 //   node tools/db-viewer/server.js [--db=<path>] [--port=<n>]
 //   WATCHLOGS_DB=<path> WATCHLOGS_DB_VIEWER_PORT=<n> node tools/db-viewer/server.js
 
-import { DatabaseSync } from 'node:sqlite';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { openReadOnly, parseArgs, parseSince, resolveDbPath } from '../lib/database.js';
+import { implicatedWatchedMs, runChecks } from '../lint/checks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-function parseArgs(argv) {
-  const out = {};
-  for (const arg of argv) {
-    const match = /^--([a-zA-Z-]+)=(.*)$/.exec(arg);
-    if (match) out[match[1]] = match[2];
-  }
-  return out;
-}
-
 const args = parseArgs(process.argv.slice(2));
-
-function defaultDbPath() {
-  // Mirrors EventStore.defaultPath() in WatchLogsKit.
-  return path.join(os.homedir(), 'Library', 'Application Support', 'WatchLogs', 'watchlogs.sqlite');
-}
-
-const dbPath = args.db || process.env.WATCHLOGS_DB || defaultDbPath();
+const dbPath = resolveDbPath(args);
 const port = Number(args.port || process.env.WATCHLOGS_DB_VIEWER_PORT || 5183);
-
-if (!fs.existsSync(dbPath)) {
-  console.error(`No database at ${dbPath}`);
-  console.error('Run the WatchLogs app at least once so it creates the database, or pass --db=<path>.');
-  process.exit(1);
-}
-
-let db;
-try {
-  db = new DatabaseSync(dbPath, { readOnly: true });
-} catch (err) {
-  console.error(`Could not open ${dbPath} read-only: ${err.message}`);
-  process.exit(1);
-}
+const db = openReadOnly(dbPath);
 
 // --- Schema introspection -------------------------------------------------
 
@@ -161,6 +133,19 @@ function handleRows(table, query) {
   return { rows, total, columns };
 }
 
+/**
+ * The lint report (`tools/lint`) over this same database.
+ *
+ * Same checks, same code as the CLI — the viewer is a second way to look at one
+ * answer, never a second implementation of it.
+ */
+function handleLint(query) {
+  const sinceMs = parseSince(query.get('since'));
+  const results = runChecks({ db, sinceMs });
+  const found = results.filter((result) => result.findings.length || result.error);
+  return { results, ...implicatedWatchedMs(db, found) };
+}
+
 // --- Tiny static file server ------------------------------------------------
 
 const MIME = {
@@ -196,6 +181,9 @@ const server = http.createServer((req, res) => {
   try {
     if (url.pathname === '/api/tables') {
       return sendJson(res, 200, handleTables());
+    }
+    if (url.pathname === '/api/lint') {
+      return sendJson(res, 200, handleLint(url.searchParams));
     }
     const columnsMatch = /^\/api\/tables\/([^/]+)\/columns$/.exec(url.pathname);
     if (columnsMatch) {

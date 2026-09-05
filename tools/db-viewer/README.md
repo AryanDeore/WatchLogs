@@ -30,6 +30,12 @@ frontend is plain JS with no build step, matching `extension/`'s convention.
 
 ## Using it
 
+- **Lint** — the top item in the left pane runs `tools/lint`'s checks against
+  this database and lists what it found, worst first: overlapping Watched time,
+  Segments the player never moved through, Views still open days later. The
+  badge is the finding count, red when something of `high` severity is there.
+  Same checks and same code as `node tools/lint/cli.js`; see
+  `tools/lint/README.md`.
 - **Left pane** — every table in the database with a live row count (the red
   bubble), refreshed every 2s. Click a table to view it.
 - **Columns** — drag a header to reorder it; click the 📍 to pin (lock) it to
