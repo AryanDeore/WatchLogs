@@ -20,6 +20,9 @@
           <span class="table-name">⚠ Lint</span>
           <span class="badge" id="lint-badge">–</span>
         </li>
+        <li class="table-item tool-item" id="replay-item">
+          <span class="table-name">⟲ Replay</span>
+        </li>
       </ul>
       <ul id="table-list"></ul>
     </aside>
@@ -47,6 +50,12 @@
         </table>
         <div id="empty-state">Pick a table on the left to see its rows.</div>
         <div id="lint-panel" hidden></div>
+        <div id="replay-panel" hidden>
+          <div id="replay-search">
+            <input id="replay-find" type="search" placeholder="Find a View by title, author, id or video id…" />
+          </div>
+          <div id="replay-body"></div>
+        </div>
       </div>
 
       <div id="pager">

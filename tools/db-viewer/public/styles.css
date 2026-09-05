@@ -407,3 +407,127 @@ tr.flash td {
   opacity: 0.6;
   font-style: italic;
 }
+
+/* --- Replay ---------------------------------------------------------------- */
+
+#replay-panel {
+  padding: 12px 20px 32px;
+  overflow-y: auto;
+}
+
+#replay-search {
+  position: sticky;
+  top: 0;
+  padding: 4px 0 12px;
+  background: inherit;
+}
+
+#replay-find {
+  width: 100%;
+  max-width: 44rem;
+  padding: 6px 10px;
+  font: inherit;
+}
+
+.replay-section {
+  margin: 0 0 26px;
+}
+
+.replay-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-bottom: 1px solid #2a2a2a;
+  padding-bottom: 4px;
+}
+
+.replay-title {
+  margin: 0 0 2px;
+  font-weight: 600;
+}
+
+.replay-section p {
+  margin: 0 0 3px;
+  font-size: 0.85rem;
+}
+
+.replay-table,
+.replay-list {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+}
+
+.replay-table th {
+  text-align: left;
+  font-weight: 500;
+  opacity: 0.55;
+  padding: 2px 10px 4px 0;
+}
+
+.replay-table td,
+.replay-list td {
+  padding: 2px 10px 2px 0;
+  white-space: nowrap;
+}
+
+.replay-table .num,
+.replay-list .num {
+  text-align: right;
+}
+
+/* A row where wall clock and media came apart: the reason both columns are
+   on screen at once. */
+.replay-table tr.warn-row td {
+  background: rgba(179, 38, 30, 0.14);
+}
+
+.replay-list tr,
+.linked-row {
+  cursor: pointer;
+}
+
+.replay-list tr:hover,
+.linked-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+td.linked {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dim {
+  opacity: 0.6;
+}
+
+.flag {
+  color: #ff6b5e;
+}
+
+.replay-loading,
+.replay-error {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.replay-error {
+  color: #ff6b5e;
+  font-style: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+}
+
+/* The `hidden` attribute is only `display: none` by default, and every rule
+   here that sets `display` on an element outranks it — which left the pager
+   sitting under the Lint and Replay panels, offering to page through nothing. */
+[hidden] {
+  display: none !important;
+}

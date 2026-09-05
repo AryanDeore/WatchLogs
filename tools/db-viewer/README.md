@@ -36,6 +36,14 @@ frontend is plain JS with no build step, matching `extension/`'s convention.
   badge is the finding count, red when something of `high` severity is there.
   Same checks and same code as `node tools/lint/cli.js`; see
   `tools/lint/README.md`.
+- **Replay** — the story behind one View: its header, its Event log with Δwall
+  against Δmedia on every step, the Segments it became (stored *and* recomputed
+  by the current build), and the History row the popover renders — including
+  which Views were folded into that row. Search by title, author or id, or click
+  any `view_id` cell in any table to jump straight there. The report comes from
+  the `wl-replay` binary, so it is the app's own Segment computation rather than
+  a second opinion; if it is not built the panel says so. See
+  [`tools/README.md`](../README.md).
 - **Left pane** — every table in the database with a live row count (the red
   bubble), refreshed every 2s. Click a table to view it.
 - **Columns** — drag a header to reorder it; click the 📍 to pin (lock) it to

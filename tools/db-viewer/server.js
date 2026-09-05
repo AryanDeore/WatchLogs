@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openReadOnly, parseArgs, parseSince, resolveDbPath } from '../lib/database.js';
 import { implicatedWatchedMs, runChecks } from '../lint/checks.js';
+import { findViews, replayBinary, replayView } from './replay.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -184,6 +185,21 @@ const server = http.createServer((req, res) => {
     }
     if (url.pathname === '/api/lint') {
       return sendJson(res, 200, handleLint(url.searchParams));
+    }
+    // Replay shells out to a binary, so unlike every other route here it is
+    // asynchronous and answers on its own.
+    if (url.pathname === '/api/replay') {
+      const viewId = url.searchParams.get('view');
+      const promise = viewId
+        ? replayView(dbPath, viewId)
+        : findViews(dbPath, url.searchParams.get('find') ?? '', 25);
+      promise
+        .then((body) => sendJson(res, 200, body))
+        .catch((err) => sendJson(res, err.statusCode || 500, { error: err.message }));
+      return;
+    }
+    if (url.pathname === '/api/replay/available') {
+      return sendJson(res, 200, { available: replayBinary() !== null });
     }
     const columnsMatch = /^\/api\/tables\/([^/]+)\/columns$/.exec(url.pathname);
     if (columnsMatch) {

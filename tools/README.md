@@ -5,9 +5,9 @@ the app writes, and none of it writes to that database.
 
 | | what it answers |
 |---|---|
-| [`db-viewer`](db-viewer/) | *what is in the database right now?* — every table, live, filterable, with a Lint tab |
+| [`db-viewer`](db-viewer/) | *what is in the database right now?* — every table, live, filterable, with the Lint and Replay tabs |
 | [`lint`](lint/) | *is any of this impossible?* — invariant checks over the stored data |
-| `wl-replay` (in [`app/Sources/WLReplay`](../app/Sources/WLReplay)) | *where did this number come from?* — one View, all the way down the pipeline |
+| `wl-replay` (in [`app/Sources/WLReplay`](../app/Sources/WLReplay)) | *where did this number come from?* — one View, all the way down the pipeline, in the terminal or in db-viewer |
 
 ## Why these exist
 
@@ -33,6 +33,15 @@ cd app
 swift run wl-replay --recent               # the last few Views
 swift run wl-replay --find="lofi"          # by title, author, id or video id
 swift run wl-replay <view-id>              # the full report
+```
+
+Or use the **Replay** tab in `db-viewer`, which is the same report in the
+browser — and where clicking any `view_id` cell in any table opens it. The tab
+shells out to this binary rather than porting it, so the web UI shows the app's
+own Segment computation; build it once with:
+
+```sh
+cd app && swift build --product wl-replay
 ```
 
 It prints the View header (and which reader supplied its metadata), the Event
