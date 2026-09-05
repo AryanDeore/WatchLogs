@@ -44,6 +44,11 @@ own Segment computation; build it once with:
 cd app && swift build --product wl-replay
 ```
 
+Search matches on words, in any order, with punctuation-only words dropped — so
+a title stored with an em dash (`MoErgo Go60 — long term review`, and YouTube
+titles are full of them) still turns up when you type an ordinary hyphen, and
+half a remembered title is enough.
+
 It prints the View header (and which reader supplied its metadata), the Event
 log with Δwall against Δmedia on every step, the stored Segments beside what
 *this build* would derive from the same Events, and the History row the popover
