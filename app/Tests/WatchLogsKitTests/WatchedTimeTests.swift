@@ -180,6 +180,18 @@ struct WatchedTimeTests {
         #expect(WatchedTimeLine.today(totals) == "Watched today · 1m")
     }
 
+    @Test("preciseDuration keeps seconds at the minute scale that duration drops")
+    func preciseDurationKeepsSecondsAtMinuteScale() {
+        #expect(WatchedTimeLine.duration(milliseconds: 83_000) == "1m")
+        #expect(WatchedTimeLine.preciseDuration(milliseconds: 83_000) == "1m23s")
+
+        // Below a minute and at the hour scale, both agree — there's nothing
+        // for the precise variant to add below 60s, and it drops back to
+        // `duration`'s coarser step once whole minutes stop being enough.
+        #expect(WatchedTimeLine.preciseDuration(milliseconds: 45_000) == "45s")
+        #expect(WatchedTimeLine.preciseDuration(milliseconds: 3_723_000) == "1h 02m")
+    }
+
     @Test("yesterday's session is not in today's total")
     func totalsAreScopedToTheirDay() throws {
         let noon = Calendar.current.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
@@ -223,6 +235,99 @@ struct WatchedTimeTests {
         let reopened = try EventStore(path: path)
         #expect(try reopened.totals(in: exampleRange).watchedMs == 24_000)
         #expect(try reopened.totals(in: exampleRange).backgroundMs == 8_000)
+    }
+
+    // MARK: - Placeholder Views and the video they belong to
+
+    /// Noon, so the open Day bootstraps here rather than crossing its own
+    /// target hour partway through a test.
+    private func todayAtNoon() -> Date {
+        Calendar.current.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
+    }
+
+    @Test("the placeholder Views a YouTube click leaves behind are counted against the video, not a ghost row")
+    func youTubeClickPlaceholdersAreCountedAgainstTheirVideo() throws {
+        let noon = todayAtNoon()
+        let clock = ManualClock(noon)
+        let (service, client, store) = try LoopbackServerTests.makeService(clock: clock)
+        defer { service.stop() }
+
+        // One real click, as a live database recorded it: the player runs for
+        // seconds before YouTube's own router names the video, so two
+        // placeholder Views open first — one on the bare home feed, one already
+        // on the watch page — and both catch up to the real id at the same
+        // instant, one of them into a View that never plays anything.
+        let start = noon.epochMillis
+        _ = try post(FlushJSON.envelope(views: [
+            FlushJSON.youTubeView(
+                id: "on-home", videoId: "sha1:184bc416", url: "https://www.youtube.com/",
+                tabId: 41, startedAt: start, watchedMs: 3_987
+            ),
+            FlushJSON.youTubeView(
+                id: "on-watch", videoId: "sha1:2c0c0092",
+                url: "https://www.youtube.com/watch?v=E5-QK3CDVQM",
+                tabId: 41, startedAt: start + 4_341, watchedMs: 5_125
+            ),
+            FlushJSON.youTubeView(
+                id: "dead-end", videoId: "E5-QK3CDVQM",
+                url: "https://www.youtube.com/watch?v=E5-QK3CDVQM",
+                tabId: 41, startedAt: start + 9_466, watchedMs: 0, previousViewId: "on-home"
+            ),
+            FlushJSON.youTubeView(
+                id: "identified", videoId: "E5-QK3CDVQM",
+                url: "https://www.youtube.com/watch?v=E5-QK3CDVQM",
+                tabId: 41, startedAt: start + 9_466, watchedMs: 75_421, previousViewId: "on-watch",
+                title: "I Open-Sourced My Own AFK Software Factory", author: "Matt Pocock",
+                durationSec: 1_806
+            ),
+        ]), to: service, using: client)
+
+        let day = try #require(try store.history(for: .today, now: Date(epochMillis: start + 84_887)).first)
+        #expect(day.videos.count == 1)
+        let row = try #require(day.videos.first)
+        #expect(row.videoId == "E5-QK3CDVQM")
+        #expect(row.title == "I Open-Sourced My Own AFK Software Factory")
+        // Every second of the click, including the seconds before anything knew
+        // which video it was.
+        #expect(row.watchedMs == 3_987 + 5_125 + 75_421)
+    }
+
+    @Test("a home-feed preview nothing can identify is left out of History rather than piled into a ghost row")
+    func unidentifiablePreviewsAreDroppedNotMerged() throws {
+        let noon = todayAtNoon()
+        let clock = ManualClock(noon)
+        let (service, client, store) = try LoopbackServerTests.makeService(clock: clock)
+        defer { service.stop() }
+
+        // Two hover-previews on the home feed, in different tabs, sharing the
+        // one hash that page has. Neither is followed by a video soon enough to
+        // belong to it — the first tab's click comes 40 s later, the second
+        // tab's never comes.
+        let start = noon.epochMillis
+        _ = try post(FlushJSON.envelope(views: [
+            FlushJSON.youTubeView(
+                id: "preview-a", videoId: "sha1:184bc416", url: "https://www.youtube.com/",
+                tabId: 7, startedAt: start, watchedMs: 4_000
+            ),
+            FlushJSON.youTubeView(
+                id: "clicked-much-later", videoId: "lP3_JgisNuM",
+                url: "https://www.youtube.com/watch?v=lP3_JgisNuM",
+                tabId: 7, startedAt: start + 44_000, watchedMs: 20_000, title: "A video"
+            ),
+            FlushJSON.youTubeView(
+                id: "preview-b", videoId: "sha1:184bc416", url: "https://www.youtube.com/",
+                tabId: 8, startedAt: start + 60_000, watchedMs: 6_000
+            ),
+        ]), to: service, using: client)
+
+        let day = try #require(try store.history(for: .today, now: Date(epochMillis: start + 66_000)).first)
+        #expect(day.videos.map(\.videoId) == ["lP3_JgisNuM"])
+        #expect(day.videos.first?.watchedMs == 20_000)
+
+        // The previews' time is still watched time — it just has no video to
+        // sit under. The Day's own total keeps every second of it.
+        let window = DateRange(startMs: start, endMs: start + 66_000)
+        #expect(try store.totals(in: window).watchedMs == 4_000 + 20_000 + 6_000)
     }
 
     // MARK: - Rejections store nothing
@@ -398,6 +503,39 @@ enum FlushJSON {
          "agent":{"extInstanceId":"ext-inst-7f3a9c21","extVersion":"0.1.0","browser":"chrome","os":"macOS 15.6"},
          "views":[\#(views.joined(separator: ","))]}
         """#.utf8)
+    }
+
+    /// One YouTube View, in the shape `content.js` sends: found, played, ended.
+    /// `watchedMs` of 0 is the View that was opened but never played — the
+    /// dead-end shape a caught-up placeholder leaves behind.
+    static func youTubeView(
+        id: String,
+        videoId: String,
+        url: String,
+        tabId: Int,
+        startedAt: Int,
+        watchedMs: Int,
+        previousViewId: String? = nil,
+        title: String? = nil,
+        author: String? = nil,
+        durationSec: Double? = nil
+    ) -> String {
+        var events: [String] = [#"{ "seq": 1, "type": "mediaFound", "t": \#(startedAt), "pos": 0 }"#]
+        if watchedMs > 0 {
+            events.append(#"{ "seq": 2, "type": "play", "t": \#(startedAt), "pos": 0 }"#)
+        }
+        let endSeq: Int = events.count + 1
+        let endedAt: Int = startedAt + watchedMs
+        let endPos: Double = Double(watchedMs) / 1_000
+        events.append(#"{ "seq": \#(endSeq), "type": "viewEnded", "t": \#(endedAt), "pos": \#(endPos), "reason": "video-changed" }"#)
+        func quoted(_ value: String?) -> String { value.map { #""\#($0)""# } ?? "null" }
+        return #"""
+        {"viewId":"\#(id)","service":"youtube.com","contentFormat":"standard","embedded":false,
+         "videoId":"\#(videoId)","url":"\#(url)","title":\#(quoted(title)),"author":\#(quoted(author)),
+         "durationSec":\#(durationSec.map { "\($0)" } ?? "null"),"metadataSource":"page","adapterId":null,
+         "tabId":\#(tabId),"startedAt":\#(startedAt),"open":false,
+         "previousViewId":\#(quoted(previousViewId)),"events":[\#(events.joined(separator: ","))]}
+        """#
     }
 
     static func view(

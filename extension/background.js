@@ -185,6 +185,10 @@ let inFlight = false;
 async function flushNow({ reconcile = false } = {}) {
   if (inFlight) return;
   inFlight = true;
+  // The App's refresh button (issue #35 §3) has no push channel to hit us
+  // with, so it rides its hint on the next Ack instead. Read outside the
+  // `finally` so the follow-up flush only starts once `inFlight` is clear.
+  let flushAgain = false;
   try {
     await currentRun();
     const raw = (await chrome.storage.local.get(PAIRING_KEY))[PAIRING_KEY];
@@ -215,6 +219,7 @@ async function flushNow({ reconcile = false } = {}) {
     if (decision.outcome === "accepted") {
       await prune(items, decision.ack);
       await chrome.storage.local.remove(PENDING_FLUSH_KEY);
+      flushAgain = decision.ack?.flushAgain === true;
     } else if (decision.outcome === "re-pair") {
       // Stop: clear the sweep and forget the pairing so nothing keeps hammering
       // the App with a dead token. The buffer stays — it is the user's data, and
@@ -226,6 +231,9 @@ async function flushNow({ reconcile = false } = {}) {
   } finally {
     inFlight = false;
   }
+  // The App only ever asks once per hint (it clears its own flag on the way
+  // out), so this can't loop: the follow-up flush's Ack won't carry it again.
+  if (flushAgain) void flushNow();
 }
 
 async function post(pairing, body) {

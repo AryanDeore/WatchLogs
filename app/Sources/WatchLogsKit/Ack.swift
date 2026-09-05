@@ -7,12 +7,20 @@ public struct Ack: Codable, Equatable, Sendable {
     public var accepted: Bool
     public var views: [ViewAck]
     public var serverTime: Int
+    /// Additive, not part of schema v1 proper: set only when the App wants this
+    /// Ack to also tell the Extension "flush again right now" (issue #35 §3's
+    /// refresh button). The App has no push channel back to the Extension, so
+    /// the hint rides the next Ack instead — omitted (rather than `false`) the
+    /// rest of the time, and `Optional` here so an Ack persisted before this
+    /// field existed still decodes.
+    public var flushAgain: Bool?
 
-    public init(flushId: String, accepted: Bool = true, views: [ViewAck], serverTime: Int) {
+    public init(flushId: String, accepted: Bool = true, views: [ViewAck], serverTime: Int, flushAgain: Bool? = nil) {
         self.flushId = flushId
         self.accepted = accepted
         self.views = views
         self.serverTime = serverTime
+        self.flushAgain = flushAgain
     }
 
     public struct ViewAck: Codable, Equatable, Sendable {

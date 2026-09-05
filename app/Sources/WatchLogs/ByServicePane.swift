@@ -126,15 +126,13 @@ private struct ServiceRow: View {
     /// it's a slice of.
     private var youtubeBreakdown: some View {
         VStack(alignment: .leading, spacing: 9) {
-            ForEach(service.formats.sorted { $0.totals.watchedMs > $1.totals.watchedMs }, id: \.contentFormat) { split in
-                if let format = ContentFormat(label: split.contentFormat) {
-                    breakdownBar(
-                        format: format,
-                        minutesMs: split.totals.watchedMs,
-                        fracOfGrand: Double(split.totals.watchedMs) / Double(grand),
-                        tint: bucketColor(service.service).opacity(0.6)
-                    )
-                }
+            ForEach(foldedFormats, id: \.format) { split in
+                breakdownBar(
+                    format: split.format,
+                    minutesMs: split.watchedMs,
+                    fracOfGrand: Double(split.watchedMs) / Double(grand),
+                    tint: bucketColor(service.service).opacity(0.6)
+                )
             }
             if service.embeddedWatchedMs > 0 {
                 embeddedRow(
@@ -145,6 +143,29 @@ private struct ServiceRow: View {
         }
         .padding(.leading, PlotColumn.nest)
         .padding(.top, 6)
+    }
+
+    /// One row per *displayed* format, not per stored slice. YouTube reaches
+    /// the store under more than one `service` string — `"youtube"` when the
+    /// Adapter binds, the bare hostname `"youtube.com"` when it doesn't — and
+    /// each one carries its own `standard`/`short` slice. The display bucket
+    /// already folds those service strings into a single service row; this
+    /// folds the formats underneath it the same way, so a format is drawn once
+    /// at its full length instead of once per stored service.
+    ///
+    /// It also makes the `ForEach` id unique. `contentFormat` alone repeated
+    /// across those slices, and a duplicate id is undefined behaviour in
+    /// SwiftUI: the pane drew a format twice and dropped the larger slice's
+    /// time entirely, so the bars no longer summed to the service above them.
+    private var foldedFormats: [(format: ContentFormat, watchedMs: Int)] {
+        var byFormat: [ContentFormat: Int] = [:]
+        for slice in service.formats {
+            guard let format = ContentFormat(label: slice.contentFormat) else { continue }
+            byFormat[format, default: 0] += slice.totals.watchedMs
+        }
+        return byFormat
+            .map { (format: $0.key, watchedMs: $0.value) }
+            .sorted { $0.watchedMs > $1.watchedMs }
     }
 
     private func breakdownBar(format: ContentFormat, minutesMs: Int, fracOfGrand: Double, tint: Color) -> some View {

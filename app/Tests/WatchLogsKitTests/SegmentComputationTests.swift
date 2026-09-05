@@ -218,6 +218,23 @@ struct SegmentComputationTests {
         #expect(computed.first?.posEnd == 7.7)
     }
 
+    /// The real marimo shape (not the sparse-heartbeat one below): `play`
+    /// landed, then nothing at all — no `sample` ever arrived, because the tab
+    /// sat backgrounded/asleep all night — until a `viewEnded` twelve hours
+    /// later revealed the media position had never left 0. A log with zero
+    /// heartbeats used to get a free pass around the stall backstop entirely;
+    /// it must be clawed back exactly like a heartbeat-bridged stall is.
+    @Test("a stall with no heartbeat at all is clawed back the same as one a heartbeat bridges")
+    func stallWithZeroHeartbeatsIsClawedBack() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.viewEnded(12 * 60 * 60_000, reason: "nav", pos: 0)
+
+        let computed = segments(log)
+        // No media advance at all + 60 s grace, not 12 hours.
+        #expect(computed.first?.durationMs == 60_000)
+    }
+
     @Test("a sparse heartbeat, even minutes apart, is trusted as continuous playback")
     func sparseHeartbeatIsTrusted() {
         var log = EventLogBuilder()

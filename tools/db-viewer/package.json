@@ -1,0 +1,10 @@
+{
+  "name": "watchlogs-db-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local read-only viewer for the WatchLogs SQLite database. Dev tool, not part of the shipped app.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

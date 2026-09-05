@@ -396,6 +396,12 @@ struct RollupTests {
         #expect(Adapter.needsAdapter(service: "netflix", adapterId: nil) == false)
         #expect(Adapter.needsAdapter(service: "vimeo", adapterId: nil) == true)
         #expect(Adapter.needsAdapter(service: "vimeo", adapterId: "some-adapter") == false)
+
+        // The question is whether WatchLogs ships a reader for the platform,
+        // not whether the Adapter bound on this View: `youtube.com` with a null
+        // adapterId is an Adapter that failed to bind, not an Adapter to write.
+        #expect(Adapter.needsAdapter(service: "youtube.com", adapterId: nil) == false)
+        #expect(Adapter.needsAdapter(service: "youtu.be", adapterId: nil) == false)
     }
 
     @Test("a stored View with a null adapterId on a Service outside the shipped set is reported as needing an Adapter")

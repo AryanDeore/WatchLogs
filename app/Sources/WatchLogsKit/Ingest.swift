@@ -25,6 +25,11 @@ public final class Ingest: @unchecked Sendable {
 
     private let concurrencyProbe = ConcurrencyProbe()
 
+    /// Armed by `requestFlushAgain()`, consumed by the very next accepted Flush
+    /// (whichever paired Extension sends it) and cleared. Guarded by `lock`
+    /// like everything else `handle` touches.
+    private var flushAgainRequested = false
+
     public convenience init(
         clock: Clock,
         store: EventStore,
@@ -49,6 +54,16 @@ public final class Ingest: @unchecked Sendable {
     /// The one-request-in-flight guarantee means this must never exceed 1.
     public var maxObservedConcurrency: Int { concurrencyProbe.peak }
 
+    /// Arms the "flush again" hint (issue #35 §3's refresh button): the next
+    /// accepted Flush's Ack carries `flushAgain: true` instead of the App's
+    /// usual silent Ack, so the Extension re-flushes immediately rather than
+    /// waiting for its next cadence tick.
+    public func requestFlushAgain() {
+        lock.lock()
+        defer { lock.unlock() }
+        flushAgainRequested = true
+    }
+
     public func handle(body: Data) -> IngestOutcome {
         lock.lock()
         defer { lock.unlock() }
@@ -67,7 +82,11 @@ public final class Ingest: @unchecked Sendable {
 
         case .ok(let envelope):
             do {
-                let ack = try store.record(envelope, serverTime: clock.now().epochMillis)
+                var ack = try store.record(envelope, serverTime: clock.now().epochMillis)
+                if flushAgainRequested {
+                    flushAgainRequested = false
+                    ack.flushAgain = true
+                }
                 onAccepted?()
                 return .accepted(ack)
             } catch {

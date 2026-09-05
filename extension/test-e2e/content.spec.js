@@ -257,6 +257,57 @@ test("two players on one page are two Views, each with its own seq", { timeout: 
   }
 });
 
+test(
+  "an ad slot that swaps its source on every loop stays one View, not one per loop",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/ad-slot.html", tag));
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll("video")) {
+          el.playbackRate = 8; // an 8 s clip loops in ~1 s so the test stays fast
+          el.play();
+        }
+      });
+
+      await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "ended").length >= 4,
+        { timeoutMs: 25_000, message: "expected at least two loops on each of the two players" },
+      );
+
+      const events = eventsTagged(server, tag);
+      assert.ok(
+        !events.some((event) => event.type === "viewEnded"),
+        "a loop that only swapped its source should never close a View",
+      );
+
+      const viewIds = new Set(viewsTagged(server, tag).map((view) => view.viewId));
+      assert.equal(viewIds.size, 2, `expected exactly one View per player across every loop, got ${viewIds.size}`);
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test("a 1x1 video that actually plays yields no View at all", { timeout: 30_000 }, async () => {
+  const tag = uniqueTag();
+  const page = await ext.context.newPage();
+  try {
+    await page.goto(taggedUrl(server, "/pixel.html", tag));
+    await page.evaluate(() => document.getElementById("v").play());
+
+    // Long enough to have cleared a sample beat and opened a View, if it were
+    // going to — the same margin the positive-control test at the top waits on.
+    await page.waitForTimeout(6000);
+
+    assert.equal(viewsTagged(server, tag).length, 0, "a 1x1 video should never open a View");
+  } finally {
+    await page.close();
+  }
+});
+
 // --- Adapters, metadata and View boundaries (#24) ---------------------------------
 
 test(
@@ -298,6 +349,55 @@ test(
       assert.equal(reports[0].changed.title, "The Real Title");
       assert.equal(reports[0].changed.author, "The Author");
       assert.equal("videoId" in reports[0].changed, false, "a new id is a View boundary, not a metadata change");
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test(
+  "a player handed the next video before the address bar moves keeps the name it was opened with",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      // The Shorts feed, in miniature: one player, one URL, and the next video
+      // pushed into the element a beat before the router would rename the page.
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: "The Short Being Watched", artist: "Its Channel" });
+        return document.getElementById("v").play();
+      });
+      // The name is on the View from the moment it opens — mediaSession was
+      // already answering — so there is no metadataChange to wait for here.
+      await waitUntil(
+        () => viewsTagged(server, tag).some((view) => view.title === "The Short Being Watched"),
+        { timeoutMs: 15_000, message: "expected the View to be named before the swap" },
+      );
+
+      // The feed moves on: new media in the same element, and the page's
+      // now-playing block already describing it.
+      await page.evaluate(async () => {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: "The Next Short", artist: "Another Channel" });
+        const video = document.getElementById("v");
+        video.src = "/fixtures/short.webm";
+        await video.play();
+      });
+      // Long enough for the 500 ms wait, a sample beat and a Flush to have
+      // carried the wrong name across, if it were going to.
+      await page.waitForTimeout(8000);
+
+      const named = eventsTagged(server, tag)
+        .filter((event) => event.type === "metadataChange")
+        .map((event) => event.changed.title);
+      assert.equal(
+        named.includes("The Next Short"),
+        false,
+        `the next video's name must not land on this View, got ${JSON.stringify(named)}`,
+      );
+      const titles = new Set(viewsTagged(server, tag).map((view) => view.title));
+      assert.deepEqual([...titles], ["The Short Being Watched"]);
     } finally {
       await page.close();
     }

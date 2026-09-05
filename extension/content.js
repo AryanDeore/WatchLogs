@@ -6,10 +6,13 @@
 // POST, the Ack and the prune — so an evicted worker costs a little latency,
 // never a lost Event.
 //
-// It binds one Adapter per frame at first sight of a player and keeps it for
-// the frame's life. Clicking through to the next Short or the next episode does
-// not route again — the bound Adapter simply reports a new video id, and a new
-// id is a View boundary.
+// It binds one Adapter per frame at first sight of a player and keeps it until
+// the page's own client-side router says the ground moved: clicking through to
+// the next Short or the next episode doesn't re-route, since the same Adapter
+// still claims the page and simply reports a new video id — but landing on a
+// video from a page the Adapter had declined (the home feed, a search, a
+// channel) does, because nothing else would ever tell this frame the page
+// changed out from under it.
 //
 // Nothing here interprets anything. `hidden` is recorded as `hidden`, a muted
 // PiP player is recorded exactly like any other; Segments, Background audio and
@@ -52,6 +55,20 @@
     enterpictureinpicture: { action: () => ({ type: "PIP_ENTER" }) },
     leavepictureinpicture: { action: () => ({ type: "PIP_LEAVE" }) },
   };
+
+  /**
+   * Is this element large enough, and actually rendered, to plausibly be a
+   * video someone is looking at — as opposed to the couple of pixels an ad
+   * network's viewability-tracking `<video>` renders at, or a decoy someone
+   * has hidden outright? A handful of CSS pixels or a `display: none` is
+   * never a real player; it is the shape those trackers leave behind.
+   */
+  function isVisiblyPlayable(media) {
+    const rect = media.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return false;
+    const style = getComputedStyle(media);
+    return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+  }
 
   /** The running capture context, once a player has shown up. */
   let helper = null;
@@ -177,17 +194,28 @@
     // `visible` would look like a transition that never happened.
     capture.tabVisible = document.visibilityState === "visible";
 
-    // One Adapter for this frame, chosen once and kept. Routing happens here,
-    // at the first sight of a player, rather than at document load: most frames
-    // on most pages never hold one, and an ad iframe should not pay for a
-    // lookup it will never use.
-    const bound = bindAdapter({ location, document });
+    // One Adapter for this frame, chosen at first sight of a player and kept
+    // until `rebind` says otherwise. Routing happens here, at the first sight
+    // of a player, rather than at document load: most frames on most pages
+    // never hold one, and an ad iframe should not pay for a lookup it will
+    // never use.
+    let bound = bindAdapter({ location, document });
 
     /** media element -> { viewId, key, pos, disambiguate } */
     const tracked = new Map();
     /** viewId -> the highest seq already on disk */
     const persisted = new Map();
     const idCache = new Map();
+    /**
+     * media element -> a stable disambiguation key, minted once per element
+     * and kept for its life in this frame. An ad slot that swaps its
+     * `currentSrc` on every loop is still the same element; keying on the
+     * element itself (rather than the source it happens to be showing right
+     * now) keeps that one slot one id across every loop, instead of minting a
+     * fresh View each time the source churns.
+     */
+    const slotKeys = new WeakMap();
+    let nextSlot = 0;
     let sampleTimer = null;
     let metaTimer = null;
     let writing = Promise.resolve();
@@ -195,8 +223,44 @@
     // The Adapter's own signal that the page moved under it — and, on a frame
     // with no Adapter, the same watcher over the page title. Neither reports
     // anything directly: both only start the wait.
-    if (bound.adapter) bound.adapter.onChange(scheduleMetadata);
-    else observeTitle(document, scheduleMetadata);
+    let unwatchMetadata = watchMetadata();
+
+    // YouTube's own router announces a client-side navigation with this event,
+    // fired on `document` — the one page-change shape `bindAdapter` never
+    // otherwise sees. A frame whose first URL had no video (the home feed, a
+    // search, a channel) is declined at first sight and, without this, stays
+    // declined forever: clicking into an actual video only ever swaps the URL
+    // and the player's contents, it never reloads the page that made the
+    // original, now-stale decision. Harmless to register on every frame — the
+    // event simply never fires anywhere but youtube.com.
+    document.addEventListener("yt-navigate-finish", rebind);
+
+    function watchMetadata() {
+      return bound.adapter ? bound.adapter.onChange(scheduleMetadata) : observeTitle(document, scheduleMetadata);
+    }
+
+    /**
+     * Re-run the same routing decision `bound` was made from, now that the
+     * page underneath it has changed, and immediately re-read every player
+     * still open against it — rather than leaving that to whatever media
+     * event or the 5-second tick happens to fire next. YouTube reuses one
+     * `<video>` element across a client-side navigation, so the element that
+     * was tracked under the stale Adapter is still the right one to re-read;
+     * `refresh` sees the newly bound Adapter's real video id differ from the
+     * stale generic one and closes that View for a correctly identified one,
+     * the same path an ordinary video-to-video change already takes. This is
+     * what keeps the gap between "the page navigated" and "this frame knows
+     * it" down to one event-loop turn instead of up to one tick interval.
+     */
+    function rebind() {
+      unwatchMetadata();
+      bound = bindAdapter({ location, document });
+      unwatchMetadata = watchMetadata();
+      const at = Date.now();
+      for (const [media, entry] of [...tracked]) {
+        if (isOpen(entry.viewId)) refresh(media, { at, pos: media.currentTime });
+      }
+    }
 
     return { handle, note, setVisible, endAll };
 
@@ -307,10 +371,24 @@
 
     // --- One media element, one View ----------------------------------------------
 
+    /** This element's own disambiguation key, minted once and kept. */
+    function slotKeyFor(media) {
+      if (!slotKeys.has(media)) slotKeys.set(media, `slot-${nextSlot++}`);
+      return slotKeys.get(media);
+    }
+
     /** The View for this element, opening one if it has none (or has out-lived it). */
     function ensureView(media, fact) {
       const existing = tracked.get(media);
       if (existing && isOpen(existing.viewId)) return existing;
+
+      // A page with no Adapter has nothing reliable to say a tiny or
+      // invisible element is a real player rather than an ad network's
+      // viewability pixel — a `<video>` rendered at a couple of CSS pixels,
+      // or hidden outright, plays for real but nobody is looking at it. An
+      // Adapter-bound frame is trusted; on a frame with no Adapter, that
+      // shape opens no View at all.
+      if (!bound.adapter && !isVisiblyPlayable(media)) return null;
 
       // Two players in one frame are two videos — unless an Adapter is bound,
       // in which case they are the pre-roll ad and the video it interrupted,
@@ -332,6 +410,9 @@
         key: header.videoId,
         pos: fact.pos || 0,
         disambiguate,
+        // The media this View is about, so a player handed a different video
+        // before the router notices can be caught — see `reportMetadata`.
+        src: media.currentSrc || "",
       };
       if (!sharing) apply(capture, { type: "OPEN", at: fact.at, viewId: entry.viewId, view: header });
       tracked.set(media, entry);
@@ -365,8 +446,18 @@
         // ad player would open a second View against the video that replaced it.
         for (const [other, otherEntry] of [...tracked]) {
           if (otherEntry.viewId !== entry.viewId) continue;
-          tracked.set(other, { ...otherEntry, viewId, key: header.videoId, pos: 0 });
+          tracked.set(other, {
+            ...otherEntry,
+            viewId,
+            key: header.videoId,
+            pos: 0,
+            src: other.currentSrc || "",
+          });
         }
+      } else if (!entry.src) {
+        // A player built before its media was attached: the first source it is
+        // given is the one this View is about.
+        entry.src = media.currentSrc || "";
       }
       scheduleMetadata();
     }
@@ -383,6 +474,7 @@
         mediaSrc: media.currentSrc || media.src || "",
         duration: media.duration,
         disambiguate,
+        disambiguateKey: disambiguate ? slotKeyFor(media) : null,
       });
       return merge({
         router: {
@@ -434,6 +526,11 @@
      * already the new View's own. A `contentFormat` that moved on its own — a
      * livestream turning into the replay of itself, same id — is reported here
      * and the View carries straight on.
+     *
+     * A player whose element has already been handed the next video is skipped:
+     * its id is unchanged only because the router has not caught up yet, and
+     * what the page says now names the video coming, not the one being watched.
+     * The View keeps the name it was opened with until its own boundary lands.
      */
     function reportMetadata() {
       clearTimeout(metaTimer);
@@ -443,6 +540,9 @@
 
       for (const [media, entry] of [...tracked]) {
         if (!isOpen(entry.viewId) || reported.has(entry.viewId)) continue;
+        // Read live rather than remembered: this report may have been scheduled
+        // before the element was handed the next video.
+        if (meta.isMediaSwap({ openedWith: entry.src, current: media.currentSrc })) continue;
         reported.add(entry.viewId);
 
         const header = describe(media, entry);

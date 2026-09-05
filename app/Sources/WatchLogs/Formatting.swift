@@ -7,3 +7,9 @@ import WatchLogsKit
 func formatWatchedTime(milliseconds: Int) -> String {
     WatchedTimeLine.duration(milliseconds: milliseconds)
 }
+
+/// The History row's own formatter: keeps seconds at the minute scale
+/// (`1m23s`), where `formatWatchedTime` would round down to `1m`.
+func formatPreciseWatchedTime(milliseconds: Int) -> String {
+    WatchedTimeLine.preciseDuration(milliseconds: milliseconds)
+}

@@ -17,31 +17,54 @@ public enum ServiceDisplayBucket: String, CaseIterable, Equatable, Hashable, Sen
         }
     }
 
+    /// Whether WatchLogs ships an Adapter for this bucket. True of every
+    /// branded bucket by construction: a platform earns a bucket by having a
+    /// reader written for it, and `otherSites` is where everything else lands.
+    public var hasShippedAdapter: Bool { self != .otherSites }
+
     /// Map a stored View's `service` to a display bucket at read time — the one
     /// point every row passes through, old and new alike.
     ///
     /// A View's `service` arrives in one of two shapes and we accept both: the
     /// Adapter id (`"youtube"`) that a shipped Adapter and the dev scripts send,
-    /// and the bare hostname (`"youtube.com"`, `"youtu.be"`) the current
-    /// Adapter-less extension slice sends. Anything unrecognised is `otherSites`,
-    /// so the worst case for a new site is a generic icon, never a failure.
+    /// and the bare hostname (`"youtube.com"`, `"youtu.be"`) a frame the Adapter
+    /// did not bind on sends. Anything unrecognised is `otherSites`, so the
+    /// worst case for a new site is a generic icon, never a failure.
     static func from(service: String) -> ServiceDisplayBucket {
-        let key = service.lowercased().hasPrefix("www.")
-            ? String(service.lowercased().dropFirst(4))
-            : service.lowercased()
-
-        if youtubeServices.contains(key) { return .youtube }
-        if netflixServices.contains(key) { return .netflix }
-        return .otherSites
+        let key = service.lowercased()
+        return brands.withLock { brands in
+            for brand in brands where key.wholeMatch(of: brand.pattern) != nil {
+                return brand.bucket
+            }
+            return .otherSites
+        }
     }
 
-    private static let youtubeServices: Set<String> = [
-        "youtube", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be",
-    ]
-
-    private static let netflixServices: Set<String> = [
-        "netflix", "netflix.com",
-    ]
+    /// One pattern per branded bucket, matched against the whole service string.
+    ///
+    /// Each reads the same way: any subdomains, the brand, any public suffix.
+    /// That shape is what keeps this from growing into a list — `youtube.com`,
+    /// `m.youtube.com`, `music.youtube.com`, a subdomain nobody has visited yet,
+    /// and `youtube.co.uk` are all the one pattern, and the Adapter id
+    /// `"youtube"` is the same pattern with both optional parts absent.
+    ///
+    /// What a pattern does still have to *say* is how the brand spells itself:
+    /// `youtu.be` and `youtube-nocookie.com` are not derivable from "youtube",
+    /// so they sit inside the brand as alternatives. That part is knowledge, not
+    /// bookkeeping, and it is bounded by how many domains a company owns.
+    ///
+    /// The suffix is capped at two labels of two-to-six letters so the brand has
+    /// to be the registrable part of the name: `youtube.co.uk` matches,
+    /// `youtube.somebody.com` — a site that is not YouTube — does not.
+    /// Built once and matched under a lock. `Regex` is not `Sendable` and
+    /// rebuilding one costs ~80x what matching a built one does, which a pane
+    /// that buckets every history row on every render would feel; the popover
+    /// reads on the main thread while ingest can bucket on the server thread,
+    /// so the lock is what makes holding onto them safe.
+    private static let brands = Locked<[(bucket: ServiceDisplayBucket, pattern: Regex<Substring>)]>([
+        (.youtube, /(?:[a-z0-9-]+\.)*(?:youtube(?:-nocookie)?|youtu\.be)(?:\.[a-z]{2,6}){0,2}/),
+        (.netflix, /(?:[a-z0-9-]+\.)*netflix(?:\.[a-z]{2,6}){0,2}/),
+    ])
 }
 
 public enum MenubarPane: String, CaseIterable, Equatable, Sendable {
@@ -151,6 +174,9 @@ public struct MenubarPopoverData: Equatable, Sendable {
     public var trends: [DaySeriesEntry]
     public var activityDay: Date
     public var activityDayLabel: String
+    /// When the most recent Flush landed, or `nil` if no Extension has ever
+    /// paired — what the title row's refresh button (issue #35 §3) disables on.
+    public var lastFlushAt: Date?
 }
 
 /// The public backing model for the native menubar popover. It owns typed UI
@@ -166,6 +192,16 @@ public final class MenubarPopoverReadModel {
     public var youtubeExpanded: Bool
     public var otherExpanded: Bool
     public var settingsOpen: Bool
+
+    /// Bumped by anything that means `resolved` might answer differently now
+    /// even though none of the range/pane state above changed — e.g. a
+    /// refresh confirming a Flush landed (issue #35 §3). `resolved` reads it
+    /// below purely to make the bump a tracked Observation dependency: SwiftUI
+    /// re-renders whatever last read `resolved`, the same way it already does
+    /// when `range` changes. Without this, new rows sat in the store until
+    /// the popover's own 5s timer or a pane switch happened to force a
+    /// re-render for an unrelated reason.
+    public private(set) var dataGeneration = 0
 
     private let store: EventStore
     private let clock: Clock
@@ -191,7 +227,15 @@ public final class MenubarPopoverReadModel {
         self.settingsOpen = false
     }
 
+    /// Marks that new data may be sitting in the store for a reason Observation
+    /// can't see on its own — the store isn't itself `@Observable` — so the
+    /// next read of `resolved` is worth re-rendering for.
+    public func markDataChanged() {
+        dataGeneration += 1
+    }
+
     public var resolved: MenubarPopoverData {
+        _ = dataGeneration
         let now = clock.now()
         let unscaledServices = (try? store.displayServiceTotals(for: range, now: now, calendar: calendar)) ?? []
         let total = unscaledServices.reduce(into: Totals()) { total, service in
@@ -220,7 +264,8 @@ public final class MenubarPopoverReadModel {
             history: (try? store.history(for: range, now: now, calendar: calendar)) ?? [],
             trends: trends,
             activityDay: activityDay,
-            activityDayLabel: DayBoundary.label(for: activityDay, calendar: calendar)
+            activityDayLabel: DayBoundary.label(for: activityDay, calendar: calendar),
+            lastFlushAt: try? store.lastFlushAt()
         )
     }
 

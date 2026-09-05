@@ -9,6 +9,7 @@ import {
   durationOf,
   fromMediaSession,
   isEmbedded,
+  isMediaSwap,
   metadataDiff,
   normalizeUrl,
   serviceFor,
@@ -130,4 +131,26 @@ test("a metadata diff reports only what actually changed", () => {
   );
   assert.equal(metadataDiff(view, { title: "Loading…" }), null);
   assert.equal(metadataDiff(view, {}), null);
+});
+
+test("one player handed a second video is a swap, whatever the address bar still says", () => {
+  // The Shorts feed, mid-scroll: the element already holds the next Short's
+  // media while the URL — and so the View's id — is still the last one's.
+  assert.equal(
+    isMediaSwap({ openedWith: "blob:https://www.youtube.com/aaaa", current: "blob:https://www.youtube.com/bbbb" }),
+    true,
+  );
+  // The same video playing on: nothing to refuse.
+  assert.equal(
+    isMediaSwap({ openedWith: "blob:https://www.youtube.com/aaaa", current: "blob:https://www.youtube.com/aaaa" }),
+    false,
+  );
+});
+
+test("a player with nothing to compare against is not a swap", () => {
+  // A player built before its media is attached, and one that has just been
+  // emptied: neither says the View has moved to another video.
+  assert.equal(isMediaSwap({ openedWith: "", current: "https://example.com/a.webm" }), false);
+  assert.equal(isMediaSwap({ openedWith: "https://example.com/a.webm", current: "" }), false);
+  assert.equal(isMediaSwap({}), false);
 });

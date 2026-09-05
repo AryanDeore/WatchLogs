@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>WatchLogs DB viewer</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <h1>WatchLogs DB</h1>
+        <div id="db-status" class="status">
+          <span class="dot"></span>
+          <span id="status-text">connecting…</span>
+        </div>
+      </div>
+      <ul id="table-list"></ul>
+    </aside>
+
+    <main id="content">
+      <div id="toolbar">
+        <h2 id="table-title">Select a table</h2>
+        <div id="toolbar-controls">
+          <input id="global-filter" type="search" placeholder="Search all columns…" disabled />
+          <label class="live-toggle">
+            <input id="live-toggle" type="checkbox" checked />
+            Live
+          </label>
+          <button id="refresh-btn" title="Refresh now">⟳</button>
+        </div>
+      </div>
+
+      <div id="table-scroll">
+        <table id="data-table">
+          <thead>
+            <tr id="header-row"></tr>
+            <tr id="filter-row"></tr>
+          </thead>
+          <tbody id="data-body"></tbody>
+        </table>
+        <div id="empty-state">Pick a table on the left to see its rows.</div>
+      </div>
+
+      <div id="pager">
+        <span id="pager-summary"></span>
+        <div id="pager-controls">
+          <label>
+            Rows
+            <select id="page-size">
+              <option>25</option>
+              <option selected>100</option>
+              <option>250</option>
+              <option>500</option>
+            </select>
+          </label>
+          <button id="prev-page">‹ Prev</button>
+          <button id="next-page">Next ›</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
