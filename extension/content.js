@@ -337,6 +337,12 @@
         });
       }
       persistAll(true);
+      // Nothing is tracked any more, so this stops the beat and drops the
+      // heartbeat anchor with it. Without that, a page coming back out of the
+      // back/forward cache — routine on Gecko — meets a timer still holding an
+      // anchor from before it was cached, and reads the cached stretch as a
+      // suspension with no players left to account for it.
+      ensureTimer();
     }
 
     // --- The 5-second heartbeat --------------------------------------------------
