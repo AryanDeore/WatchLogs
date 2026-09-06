@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// read here on the main thread.
     private let lastFlush = Locked<Date?>(nil)
 
-    private static let version = "0.1.0"
+    private static let version = "0.1.1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)

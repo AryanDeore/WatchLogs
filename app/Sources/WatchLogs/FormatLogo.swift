@@ -52,14 +52,15 @@ private struct VideoMark: View {
     let size: CGFloat
 
     var body: some View {
-        Circle()
+        // Match the YouTube brand mark used by `ServiceLogo`.
+        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
             .fill(youTubeRed)
-            .frame(width: size * 0.90, height: size * 0.90)
+            .frame(width: size, height: size * 0.72)
             .overlay {
                 PlayTriangle()
                     .fill(.white)
-                    .frame(width: size * 0.26, height: size * 0.30)
-                    .offset(x: size * 0.03)
+                    .frame(width: size * 0.24, height: size * 0.28)
+                    .offset(x: size * 0.02)
             }
             .frame(width: size, height: size)
     }

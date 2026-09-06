@@ -190,15 +190,16 @@ private struct VideoRow: View {
     }
 }
 
-/// A YouTube row is marked by its content format — a Video, Shorts or Live
-/// glyph — so a Short reads differently from a full video at a glance. Every
-/// other service keeps its brand mark.
+/// YouTube rows use the brand icon for standard videos, and the Shorts glyph
+/// only for Shorts. Every other service keeps its brand mark.
 private struct RowIcon: View {
     let video: HistoryVideo
 
     var body: some View {
-        if video.service == .youtube, let format = ContentFormat(label: video.contentFormat) {
-            FormatLogo(format: format, size: 14)
+        if video.service == .youtube,
+           let format = ContentFormat(label: video.contentFormat),
+           format == .short {
+            FormatLogo(format: .short, size: 14)
         } else {
             ServiceLogo(service: video.service, size: 14)
         }

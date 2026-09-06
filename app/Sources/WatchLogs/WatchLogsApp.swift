@@ -38,7 +38,7 @@ final class AppController {
     init() {
         do {
             let transport = try LoopbackTransport(
-                version: "0.1.0",
+                version: "0.1.1",
                 tokenStore: KeychainTokenStore(),
                 store: EventStore(path: try EventStore.defaultPath())
             )

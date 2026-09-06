@@ -23,8 +23,13 @@ struct TitleRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("WatchLogs")
-                .font(.headline)
+            HStack(spacing: 6) {
+                Text("WatchLogs")
+                    .font(.headline)
+                Text("v0.0.1")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
             Text(formatWatchedTime(milliseconds: data.total.watchedMs))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
