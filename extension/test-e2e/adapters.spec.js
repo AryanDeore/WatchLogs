@@ -63,6 +63,8 @@ test("a real watch page gives up its id, title and channel", { timeout: 30_000 }
   assert.match(snapshot.title, /Never Gonna Give You Up/);
   assert.equal(snapshot.author, "Rick Astley");
   assert.equal(snapshot.confidence, "high");
+  // Read off `<meta itemprop="duration" content="PT3M34S">`, not the element.
+  assert.equal(snapshot.durationSec, 214);
 });
 
 test("a real livestream reads as live from the path and from the page", { timeout: 30_000 }, async () => {
@@ -71,10 +73,15 @@ test("a real livestream reads as live from the path and from the page", { timeou
   assert.equal(fromPath.snapshot.contentFormat, "live");
   assert.equal(fromPath.snapshot.author, "Lofi Girl");
 
+  // This fixture's duration markup is YouTube's live placeholder (`PT2026691M52S`,
+  // ~3.85 years); a live View must never report it as a real length.
+  assert.equal(fromPath.snapshot.durationSec, undefined);
+
   // The same broadcast reached by its watch URL has no live *path* to go on, so
   // this is the schema.org marker doing the work.
   const fromMarker = await youtube("live", "https://www.youtube.com/watch?v=jfKfPfyJRdk");
   assert.equal(fromMarker.snapshot.contentFormat, "live");
+  assert.equal(fromMarker.snapshot.durationSec, undefined);
 });
 
 test("a real Short is a short, with the Short's own title element", { timeout: 30_000 }, async () => {
@@ -84,6 +91,8 @@ test("a real Short is a short, with the Short's own title element", { timeout: 3
   assert.ok(snapshot.title, "expected the Short's title, not the watch page's empty h1");
   assert.ok(snapshot.author, "expected a channel name");
   assert.equal(snapshot.confidence, "high");
+  // Shorts carry no duration markup; the length stays the element's job here.
+  assert.equal(snapshot.durationSec, undefined);
 });
 
 // An embed that has not been played yet is a shell: the player draws its title
@@ -95,6 +104,7 @@ test("a real embed keeps the id and admits it found nothing else", { timeout: 30
   assert.equal(snapshot.videoId, "dQw4w9WgXcQ");
   assert.equal(snapshot.embedded, true);
   assert.equal(snapshot.confidence, "low");
+  assert.equal(snapshot.durationSec, undefined);
 });
 
 test("a real channel page and YouTube Music are declined", { timeout: 30_000 }, async () => {

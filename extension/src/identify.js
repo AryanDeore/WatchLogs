@@ -163,6 +163,24 @@ export function durationOf(duration) {
 }
 
 /**
+ * Seconds from the ISO-8601 duration subset YouTube writes into its SEO markup
+ * (`<meta itemprop="duration" content="PT3M34S">`): `PT`, then any of `#H`,
+ * `#M`, `#S`. Anything outside that exact shape — a real ISO duration with a
+ * date part, a `1:23` clock string, an empty attribute, junk — is null, so the
+ * caller falls through to another source rather than trusting a guess.
+ *
+ * The number is passed through untouched, including YouTube's own live-stream
+ * placeholder (`PT2026691M52S`, ~3.85 years). Deciding that a value that large
+ * means "no fixed length" is the caller's job, not the parser's.
+ */
+export function parseIsoDuration(text) {
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(String(text ?? "").trim());
+  if (!match || match.slice(1).every((part) => part === undefined)) return null;
+  const [hours, minutes, seconds] = match.slice(1).map((part) => Number(part ?? 0));
+  return durationOf(hours * 3600 + minutes * 60 + seconds);
+}
+
+/**
  * `navigator.mediaSession.metadata`, flattened to View header fields.
  *
  * Artwork is read and then thrown away — deliberately. The thumbnail is not

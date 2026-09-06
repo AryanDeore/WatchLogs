@@ -22,11 +22,12 @@ public enum SegmentComputer {
     public static let noiseFloorMs = 1000
 
     /// A playing player heartbeats every few seconds (`content.js` SAMPLE_MS =
-    /// 5 s). A stretch inside a Segment longer than this with **no** heartbeat
-    /// and **no** media advance is not playback — it is the Mac asleep or the
-    /// network dead — and only the media advance (plus `stallGraceMs`) is
-    /// banked for it. The real fix is the Extension noticing the missed beats;
-    /// this is the read-side backstop for logs already on disk.
+    /// 5 s). A stretch inside a Segment longer than this with **no media
+    /// advance** is not playback — it is the Mac asleep or the network dead —
+    /// and only the media advance (plus `stallGraceMs`) is banked for it. The
+    /// real fix is the Extension noticing the missed beats (it now does, via
+    /// `unwatchedGapMs`); this is the read-side backstop, for logs written
+    /// before that landed and for gaps no page was alive to notice.
     static let maxHeartbeatGapMs = 180_000
     /// Buffering slack credited to an unmonitored gap on top of its media advance.
     static let stallGraceMs = 60_000
@@ -79,12 +80,20 @@ private struct Machine {
     /// unmonitored gap while a Segment is open.
     private var lastSeenAt: Int?
     private var lastSeenPos: Double?
-    /// The latest wall-clock instant the currently open Segment is allowed to
-    /// reach: if it spanned a long, heartbeat-free, motionless gap, it may run
-    /// only to where that gap's believable playback (media advance +
-    /// `stallGraceMs`) would have ended. `.max` means no such gap. Reset by
-    /// `close`, so the next Segment starts uncapped.
-    private var stallCeilingMs = Int.max
+    /// The latest wall-clock instant the open Segment has actually earned.
+    ///
+    /// It starts where the Segment does and creeps forward Event by Event: by
+    /// the real time elapsed for an ordinary step, and by only the believable
+    /// playback (media advance + `stallGraceMs`) for a step that spanned a long,
+    /// motionless gap. `close` takes it as a ceiling, which is what claws a
+    /// frozen player's time back out of the Segment.
+    ///
+    /// Earned forward rather than lost backward, so it composes. A Segment can
+    /// span several gaps — a laptop opened and shut twice over an afternoon —
+    /// and the hour genuinely watched between two naps still has to count, while
+    /// a Segment closed at an instant *before* a gap must not be charged for it
+    /// at all.
+    private var creditedEndMs = 0
 
     private var playing = false
     /// A View is born from a media element in a tab the user is looking at
@@ -114,7 +123,7 @@ private struct Machine {
     private var kindNow: Segment.Kind { foreground ? .watched : .background }
 
     mutating func apply(_ event: RawEvent) {
-        accountForUnmonitoredGap(before: event)
+        creditElapsed(before: event)
         defer {
             lastSeenAt = event.t
             if let pos = event.pos { lastSeenPos = pos }
@@ -225,46 +234,60 @@ private struct Machine {
         lastConfirmedPos = event.pos
     }
 
-    /// An open Segment that spans a long gap with no heartbeat and no media
-    /// progress was not being watched across it — the player was frozen (or the
-    /// Mac was asleep, or the tab was thrown away and never got to heartbeat at
-    /// all). Bank only the media advance plus a buffering margin; the rest is
-    /// subtracted from the Segment's end in `close`. A `sample`, however sparse,
-    /// is proof the player reported in, so a gap a sample ends is left
-    /// untouched. This applies even to a View whose log has *no* `sample`
-    /// Events anywhere — a `play` with nothing else until an hours-later
-    /// `viewEnded` is exactly the shape a suspended tab leaves behind, and it
-    /// gets no more benefit of the doubt than a gap between two heartbeats does.
-    private mutating func accountForUnmonitoredGap(before event: RawEvent) {
-        guard !isLive, open != nil, event.type != .sample,
-              let lastSeenAt, let lastSeenPos, let pos = event.pos else { return }
-        let gap = event.t - lastSeenAt
-        guard gap > SegmentComputer.maxHeartbeatGapMs else { return }
+    /// Move the open Segment's credit up to this Event, by the real time since
+    /// the last one — or by less, where that stretch was not playback.
+    ///
+    /// An open Segment that spans a long gap with no media progress was not
+    /// being watched across it: the player was frozen, or the Mac was asleep, or
+    /// the tab was thrown away and never got to heartbeat at all. Such a stretch
+    /// earns only the media advance plus a buffering margin, and `close` takes
+    /// the difference back off the Segment's end. This applies even to a View
+    /// whose log has *no* `sample` Events anywhere — a `play` with nothing else
+    /// until an hours-later `viewEnded` is exactly the shape a suspended tab
+    /// leaves behind, and it gets no more benefit of the doubt than a gap
+    /// between two heartbeats does.
+    ///
+    /// A `sample` closing the gap is no exemption either, and that is the whole
+    /// point: the Extension's timer does not run while the Mac sleeps, so the
+    /// first thing after a four-hour lid close is the resumed beat, reporting
+    /// `playing` at the position it left off. Trusting it because it is a
+    /// heartbeat banked the entire nap. What earns a gap its full credit is the
+    /// media having moved across it, whatever Event type happens to reveal that.
+    private mutating func creditElapsed(before event: RawEvent) {
+        guard open != nil, let lastSeenAt else { return }
+        let elapsed = max(0, event.t - lastSeenAt)
+        creditedEndMs += min(elapsed, believable(elapsed, at: event))
+    }
+
+    /// How much of `elapsed` is playback anyone can vouch for. All of it, unless
+    /// this is a long gap whose two ends both carry a media position and those
+    /// positions say the player barely moved.
+    private func believable(_ elapsed: Int, at event: RawEvent) -> Int {
+        guard !isLive, elapsed > SegmentComputer.maxHeartbeatGapMs,
+              let lastSeenPos, let pos = event.pos else { return elapsed }
         let mediaAdvanceMs = Int(max(0, pos - lastSeenPos) * 1000)
-        let credited = min(gap, mediaAdvanceMs + SegmentComputer.stallGraceMs)
-        stallCeilingMs = min(stallCeilingMs, lastSeenAt + credited)
+        return mediaAdvanceMs + SegmentComputer.stallGraceMs
     }
 
     private mutating func start(at t: Int, pos: Double?) {
         open = OpenSegment(kind: kindNow, startMs: t, posStart: pos)
+        creditedEndMs = t
     }
 
     private mutating func close(at t: Int, pos: Double?, provisional: Bool = false) {
         guard let current = open else { return }
         open = nil
-        let ceiling = stallCeilingMs
-        stallCeilingMs = Int.max
         // An inferred boundary can predate the Segment it closes (a seek, then
         // a heartbeat revealing a stop with nothing confirmed since). That
-        // Segment is zero-length and the noise floor drops it. `ceiling` claws
-        // back any frozen-player time the Segment ran past — but never pushes
-        // its end earlier than an explicit close instant already did.
+        // Segment is zero-length and the noise floor drops it. `creditedEndMs`
+        // claws back any frozen-player time the Segment ran through — but never
+        // pushes its end earlier than an explicit close instant already did.
         let rawEnd = max(current.startMs, t)
         segments.append(Segment(
             viewId: viewId,
             kind: current.kind,
             wallStartMs: current.startMs,
-            wallEndMs: max(current.startMs, min(rawEnd, ceiling)),
+            wallEndMs: max(current.startMs, min(rawEnd, creditedEndMs)),
             posStart: current.posStart,
             posEnd: pos,
             provisional: provisional

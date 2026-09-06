@@ -980,6 +980,106 @@ public final class EventStore: @unchecked Sendable {
         return try loadSegments(viewId: viewId)
     }
 
+    /// A View's Event log, oldest first, exactly as stored.
+    ///
+    /// The counterpart to `segments(viewId:)`: that returns what was derived,
+    /// this returns what it was derived *from*. Having both means a tool can
+    /// re-run `SegmentComputer` over the log and compare — which is the only way
+    /// to tell "this data is wrong" apart from "this data was written by an
+    /// older build".
+    public func rawEvents(viewId: String) throws -> [RawEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return try loadEvents(viewId: viewId)
+    }
+
+    /// Stored Views matching `query`, newest first. An empty `query` is "the most
+    /// recent Views", which is what you want when something just went wrong and
+    /// you do not yet know its name.
+    ///
+    /// Every word in the query has to appear somewhere in the View's id, video
+    /// id, title or author — order does not matter, and punctuation-only words
+    /// are dropped. That last part is not fussiness: a title reading
+    /// `MoErgo Go60 — long term review` is stored with an em dash, and someone
+    /// typing it back with an ordinary hyphen against a plain substring match
+    /// gets nothing, which reads as "that video was never recorded" rather than
+    /// "you typed a different dash". Words also mean a half-remembered title
+    /// finds its View.
+    public func viewRecords(matching query: String = "", limit: Int = 20) throws -> [ViewRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let terms = Self.searchTerms(query)
+        let clause = terms.isEmpty
+            ? "1 = 1"
+            : terms
+                .map { _ in
+                    "(view_id LIKE ? ESCAPE '\\' OR video_id LIKE ? ESCAPE '\\'"
+                    + " OR title LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\')"
+                }
+                .joined(separator: " AND ")
+        // Four bindings per term, in the order the clause names them.
+        var parameters: [SQLiteDatabase.Value] = terms.flatMap { term in
+            Array(repeating: SQLiteDatabase.Value.text("%\(Self.escapedForLike(term))%"), count: 4)
+        }
+        parameters.append(.int(limit))
+
+        var records: [ViewRecord] = []
+        try database.query(
+            """
+            SELECT view_id, service, content_format, embedded, video_id, url, title, author,
+                   duration_sec, metadata_source, adapter_id, tab_id, started_at_ms, open,
+                   previous_view_id
+            FROM views
+            WHERE \(clause)
+            ORDER BY started_at_ms DESC
+            LIMIT ?
+            """,
+            parameters
+        ) { row in
+            records.append(ViewRecord(
+                viewId: row.text(0),
+                service: row.text(1),
+                contentFormat: row.text(2),
+                embedded: row.bool(3),
+                videoId: row.text(4),
+                url: row.text(5),
+                title: row.optionalText(6),
+                author: row.optionalText(7),
+                durationSec: row.optionalDouble(8),
+                metadataSource: row.optionalText(9),
+                adapterId: row.optionalText(10),
+                tabId: row.int(11),
+                startedAtMs: row.int(12),
+                open: row.bool(13),
+                previousViewId: row.optionalText(14)
+            ))
+        }
+        return records
+    }
+
+    /// The query split into words worth matching on.
+    ///
+    /// Split on whitespace, then trimmed of leading and trailing punctuation —
+    /// trimmed rather than stripped throughout, so a UUID keeps its hyphens and
+    /// still matches a `view_id`, while a lone `-` or `—` between words falls
+    /// away instead of failing to match anything.
+    static func searchTerms(_ query: String) -> [String] {
+        query
+            .split(whereSeparator: \.isWhitespace)
+            .map { String($0.trimmingCharacters(in: .punctuationCharacters.union(.symbols))) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// `%` and `_` are LIKE's own wildcards, so a query containing them would
+    /// otherwise match far more than it says.
+    static func escapedForLike(_ term: String) -> String {
+        term
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+    }
+
     /// Row counts, for tests that need to see that a rejected Flush stored
     /// nothing.
     public struct Counts: Equatable, Sendable {
@@ -1363,7 +1463,8 @@ public final class EventStore: @unchecked Sendable {
                 embedded: group.embedded, title: group.title, author: group.author,
                 firstWatchedAt: Date(epochMillis: group.minWallStart),
                 lastWatchedAt: Date(epochMillis: group.maxWallEnd), watchedMs: group.watchedMs,
-                watchCount: group.viewIds.count, knownDurationSec: group.durationSec,
+                watchCount: group.viewIds.count, viewIds: group.viewIds.sorted(),
+                knownDurationSec: group.durationSec,
                 isOpen: group.open, isPlaying: isPlaying, coverage: coverage
             )
         }

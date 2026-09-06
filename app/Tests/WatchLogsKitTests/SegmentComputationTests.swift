@@ -116,6 +116,44 @@ struct SegmentComputationTests {
         #expect(computed[0].durationMs == 10_000)
     }
 
+    /// Sept 5, 2:13 PM: a video opened in a background tab, left there for 15
+    /// minutes, then actually watched for ~2. History said 17m13s (#40).
+    ///
+    /// The tab never transitioned, so `visibilitychange` never fired and the
+    /// log carried no visibility Event at all — which this machine reads as
+    /// "the user was looking at it from the first instant". The Extension now
+    /// stamps the `hidden` at birth (`capture.js` `newView`), and the beat runs
+    /// for a player that only *wants* to play, so the suspended stretch reports
+    /// itself instead of being assumed. Neither the suspended stretch nor the
+    /// suppressed `play` may reach Watched time.
+    @Test("a video opened in a background tab banks no Watched time until the tab comes forward")
+    func backgroundTabOpenBanksNoWatchedTime() {
+        var log = EventLogBuilder()
+        log.mediaFound(0)
+        // Born hidden: the tab was never in the foreground to transition from.
+        log.hidden(0)
+        // 15 minutes of a player Chrome suspended: un-paused, never advancing.
+        // `content.js` suppresses the `play`, and every beat says so.
+        for beat in stride(from: 60_000, through: 840_000, by: 60_000) {
+            log.sample(beat, playing: false, visible: false, pos: 0)
+        }
+        // The user switches to the tab; playback actually starts.
+        log.visible(886_000, pos: 0)
+        for beat in stride(from: 891_000, through: 1_001_000, by: 5_000) {
+            log.sample(beat, playing: true, visible: true, pos: Double(beat - 886_000) / 1_000)
+        }
+        log.pause(1_001_000, pos: 115)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].kind == .watched)
+        // The Segment opens at the beat that first confirmed playback, never at
+        // the `play` fifteen minutes earlier.
+        #expect(computed[0].wallStartMs == log.at(891_000))
+        #expect(computed[0].durationMs == 110_000)
+        #expect(computed.filter { $0.kind == .background }.isEmpty)
+    }
+
     @Test("losing the foreground splits watched into background with no wall-clock gap")
     func hiddenSplitsTheSegment() {
         var log = EventLogBuilder()
@@ -235,18 +273,59 @@ struct SegmentComputationTests {
         #expect(computed.first?.durationMs == 60_000)
     }
 
-    @Test("a sparse heartbeat, even minutes apart, is trusted as continuous playback")
-    func sparseHeartbeatIsTrusted() {
+    /// A hidden tab Chromium has throttled to one timer per minute still beats,
+    /// just rarely. What tells that apart from a suspended frame is the media
+    /// clock keeping pace with the wall clock, so a sparse heartbeat that
+    /// carries real, advancing positions counts in full however far apart the
+    /// beats are.
+    @Test("a sparse heartbeat whose media keeps pace is trusted as continuous playback")
+    func sparseHeartbeatKeepingPaceIsTrusted() {
         var log = EventLogBuilder()
         log.play(0, pos: 0)
-        // One beat every 30 minutes, position never read — the rollup tests'
-        // shorthand for "played straight through". Still counts in full.
         for beat in 1...4 {
-            log.sample(beat * 30 * 60_000, pos: 0)
+            log.sample(beat * 30 * 60_000, pos: Double(beat) * 30 * 60)
         }
-        log.viewEnded(120 * 60_000, reason: "nav", pos: 0)
+        log.viewEnded(120 * 60_000, reason: "nav", pos: 120 * 60)
 
         #expect(segments(log).first?.durationMs == 120 * 60_000)
+    }
+
+    /// The lid-close shape, and the reason a `sample` earns no exemption from
+    /// the stall backstop. The Extension's 5-second timer does not run while the
+    /// Mac sleeps; it resumes on wake, so the first Event after a four-hour nap
+    /// is an ordinary heartbeat reporting `playing` at the position it left off.
+    /// Trusting it because it is a heartbeat banked the whole four hours.
+    @Test("a heartbeat resuming after a sleep does not vouch for the sleep")
+    func heartbeatResumingAfterSleepIsClawedBack() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+        // --- the lid is shut for four hours; the media clock never moves ---
+        log.sample(4 * 3_600_000 + 10_000, pos: 10)
+        log.viewEnded(4 * 3_600_000 + 15_000, reason: "nav", pos: 15)
+
+        // 10 s watched + the 60 s of grace the motionless gap is credited + the
+        // 5 s after the wake — not 4 h 0 m 15 s.
+        #expect(segments(log).first?.durationMs == 75_000)
+    }
+
+    /// The same nap, but with the Extension doing its own job (issue #32): it
+    /// notices the missed beats on wake, pauses the View back at the last beat
+    /// that ran and plays it again now. Two honest Segments, and the read-side
+    /// backstop never has to fire.
+    @Test("an Extension that closes its own suspension gap yields two clean Segments")
+    func extensionReportedSuspensionSplitsTheView() {
+        var log = EventLogBuilder()
+        log.play(0, pos: 0)
+        log.sample(5_000, pos: 5)
+        log.sample(10_000, pos: 10)
+        log.pause(10_000, pos: 10) // stamped at the last beat, not at wake
+        log.play(4 * 3_600_000 + 10_000, pos: 10)
+        log.sample(4 * 3_600_000 + 15_000, pos: 15)
+        log.viewEnded(4 * 3_600_000 + 20_000, reason: "nav", pos: 20)
+
+        #expect(segments(log).map(\.durationMs) == [10_000, 10_000])
     }
 
     @Test("slow-motion playback is wall-clock time, not clawed back")

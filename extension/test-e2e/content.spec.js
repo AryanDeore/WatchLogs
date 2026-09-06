@@ -17,7 +17,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startStubServer } from "./stub-server.mjs";
-import { launchExtension, hidePage } from "./extension.mjs";
+import { launchExtension, hidePage, showPage, suspendPage } from "./extension.mjs";
 import { uniqueTag, taggedUrl, viewsTagged, eventsTagged, viewsSince, waitUntil } from "./helpers.mjs";
 
 let server;
@@ -77,12 +77,11 @@ test(
         document.getElementById("v").play().catch(() => {});
       });
 
-      // Longer than one 5s heartbeat: proof the timer never started, not
-      // just that we got unlucky with when we looked.
+      // Longer than two 5s heartbeats, so the beats that do run have run.
       await new Promise((resolve) => setTimeout(resolve, 11_000));
 
       // Nothing here calls persistAll(flush: true) on its own — a stuck
-      // player never re-arms the timer that would — so ask the worker
+      // player never fires the media events that would — so ask the worker
       // directly for whatever made it to the buffer.
       await ext.forceFlush();
       await waitUntil(() => viewsTagged(server, tag).length > 0, {
@@ -91,9 +90,18 @@ test(
       });
 
       const events = eventsTagged(server, tag);
+      // The `play` this page fired is a request, not playback: the player it
+      // was fired at has nothing to play and never moves. Recording it, with
+      // nothing after it to take it back, is the whole of #40.
       assert.ok(
-        !events.some((event) => event.type === "sample"),
-        `expected no sample events, got ${JSON.stringify(events)}`,
+        !events.some((event) => event.type === "play"),
+        `expected no play event, got ${JSON.stringify(events)}`,
+      );
+      // The beat still runs, and reports the truth. Silence would leave the
+      // App with nothing at all to read a stuck player from.
+      assert.ok(
+        !events.some((event) => event.type === "sample" && event.playing),
+        `expected no sample claiming playing:true, got ${JSON.stringify(events)}`,
       );
     } finally {
       await page.close();
@@ -191,6 +199,61 @@ test("a hidden tab reports visible:false, and the wire never says background", {
     await page.close();
   }
 });
+
+test(
+  "coming back into view re-describes the player, even with no heartbeat to catch it",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      // Open the View, then pause it: no heartbeat runs for a paused player, so
+      // the only thing that can catch a metadata change made while hidden is
+      // the fix under test, not the beat that would otherwise paper over it.
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "play"), {
+        timeoutMs: 15_000,
+      });
+      await page.evaluate(() => document.getElementById("v").pause());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "pause"), {
+        timeoutMs: 15_000,
+      });
+
+      await hidePage(ext.context, page);
+
+      // `mediaSession.metadata` has no change event of its own — nothing but a
+      // fresh `describe()` call ever reads it again. A tab Chromium actually
+      // freezes can hold a `<video>` whose real length only resolves while
+      // hidden; this stands in for that with the one field guaranteed not to
+      // be caught by anything else already watching (title has its own
+      // MutationObserver; this doesn't).
+      const before = eventsTagged(server, tag).filter((event) => event.type === "metadataChange").length;
+      await page.evaluate(() => {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: "Learned While Hidden", artist: "Its Channel" });
+      });
+
+      // Long enough that anything else already watching would have reported
+      // it by now, paused and hidden as the player is.
+      await page.waitForTimeout(2000);
+      assert.equal(
+        eventsTagged(server, tag).filter((event) => event.type === "metadataChange").length,
+        before,
+        "nothing should have reported the change yet — becoming visible hasn't happened",
+      );
+
+      await showPage(ext.context, page);
+
+      const report = await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "metadataChange").at(before),
+        { timeoutMs: 15_000, message: "expected a metadataChange once the tab came back into view" },
+      );
+      assert.equal(report.changed.title, "Learned While Hidden");
+    } finally {
+      await page.close();
+    }
+  },
+);
 
 test("rate changes ride the wire without inflating the sample cadence", { timeout: 30_000 }, async () => {
   const tag = uniqueTag();
@@ -472,6 +535,57 @@ test(
         (event) => event.type === "viewEnded" && event.viewId === firstViewId,
       );
       assert.equal(ending.reason, "video-changed");
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+// Issue #32. The Extension's blind spot is time it was not running: a closed
+// lid, a frozen tab, a killed renderer. Nothing fires a `pause` and a suspended
+// process does not run its heartbeat timer, so on the way back the last thing
+// recorded is "playing" and the next thing is "playing" — and the whole silence
+// used to arrive at the App as watching.
+test(
+  "a wall clock that jumped while the player stood still is paused back at the last beat",
+  { timeout: 45_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => document.getElementById("v").play());
+
+      // Two real beats first: the second is the last instant this frame can
+      // honestly vouch for, and where the synthetic pause has to land.
+      await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "sample").length >= 2,
+        { timeoutMs: 20_000, message: "expected two samples before the suspension" },
+      );
+      const beatsBefore = eventsTagged(server, tag).filter((event) => event.type === "sample");
+      const lastBeat = beatsBefore.at(-1);
+
+      // The lid shuts for four hours. Nothing in the page runs; the clock moves.
+      await suspendPage(ext.context, page, 4 * 60 * 60 * 1000);
+
+      const pause = await waitUntil(
+        () => eventsTagged(server, tag).find((event) => event.type === "pause"),
+        { timeoutMs: 20_000, message: "expected a pause synthesized on the way back" },
+      );
+
+      const events = eventsTagged(server, tag);
+      const replay = events.filter((event) => event.type === "play").at(-1);
+
+      assert.equal(pause.t, lastBeat.t, "the pause is stamped at the last beat that actually ran");
+      assert.equal(pause.pos, lastBeat.pos, "and at the position that beat saw");
+      assert.ok(replay.t > pause.t, "playback resumes as its own Segment, at the wake");
+      assert.ok(
+        replay.t - pause.t >= 4 * 60 * 60 * 1000 - 60_000,
+        `expected the reopen on the far side of the gap, got ${replay.t - pause.t} ms`,
+      );
+      // What the App reads off this: 10-odd seconds of watching before the nap
+      // and whatever comes after it, with the four hours belonging to nobody.
+      assert.ok(pause.t - events[1].t < 60_000, "the Segment before the nap is seconds, not hours");
     } finally {
       await page.close();
     }

@@ -140,6 +140,13 @@ public struct HistoryVideo: Equatable, Sendable, Identifiable {
     /// How many separate Views of this video landed in the Day (1 when it was
     /// watched once).
     public var watchCount: Int
+    /// Which Views were folded into this row. Not shown in the UI: a row is
+    /// about a video, and which Views carried it is an implementation detail of
+    /// the fold — right up to the moment the fold is wrong, when it is the only
+    /// thing that explains the row. `orphanAttribution` can put a View here that
+    /// names a different video in storage, and a row measured against another
+    /// video's duration looks perfectly ordinary until you can see that.
+    public var viewIds: [String]
     public var knownDurationSec: Double?
     public var isOpen: Bool
     /// The video playing right now: an open View whose watched time reaches up

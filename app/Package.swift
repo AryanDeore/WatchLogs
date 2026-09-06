@@ -6,9 +6,18 @@ let package = Package(
     platforms: [
         .macOS(.v14)
     ],
+    products: [
+        // A debug tool, built from the same module the app runs on so it can
+        // never drift from it. Not shipped.
+        .executable(name: "wl-replay", targets: ["WLReplay"])
+    ],
     targets: [
         .target(
             name: "WatchLogsKit"
+        ),
+        .executableTarget(
+            name: "WLReplay",
+            dependencies: ["WatchLogsKit"]
         ),
         .executableTarget(
             name: "WatchLogs",
