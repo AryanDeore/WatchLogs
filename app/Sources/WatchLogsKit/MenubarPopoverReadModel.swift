@@ -152,7 +152,7 @@ public struct HistoryVideo: Equatable, Sendable, Identifiable {
     /// The video playing right now: an open View whose watched time reaches up
     /// to the moment the pane was resolved. Sorted to the very top.
     public var isPlaying: Bool
-    /// `nil` for live videos and videos without a known duration.
+    /// `nil` for videos without a trustworthy fixed length.
     public var coverage: Double?
 }
 

@@ -134,16 +134,7 @@ private struct VideoRow: View {
                             Text("·")
                         }
                         Text(clockTime(video.lastWatchedAt))
-                        // Shorts and Videos are told apart by the row icon; only
-                        // "live" still earns a text badge.
-                        if video.contentFormat == "live" {
-                            Text(video.contentFormat)
-                                .font(.caption2)
-                                .padding(.horizontal, 4)
-                                .background(bucketColor(video.service).opacity(0.15))
-                                .foregroundStyle(bucketColor(video.service))
-                                .clipShape(Capsule())
-                        }
+                        // Shorts and standard videos are told apart by the row icon.
                         if video.embedded {
                             Text("embedded")
                                 .font(.caption2)
@@ -190,24 +181,24 @@ private struct VideoRow: View {
                     .padding(.leading, 22)
                     .padding(.top, 2.4)
             } else {
-                Text(video.isPlaying ? "Playing now" : video.isOpen ? "Still watching" : "No fixed length")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                DurationBar(fraction: nonFixedLengthBarFraction(video), height: barHeight)
                     .padding(.leading, 22)
+                    .padding(.top, 2.4)
             }
         }
     }
 }
 
-/// A YouTube row is marked by its content format — a Video, Shorts or Live
-/// glyph — so a Short reads differently from a full video at a glance. Every
-/// other service keeps its brand mark.
+/// YouTube rows use the brand icon for standard videos, and the Shorts glyph
+/// only for Shorts. Every other service keeps its brand mark.
 private struct RowIcon: View {
     let video: HistoryVideo
 
     var body: some View {
-        if video.service == .youtube, let format = ContentFormat(label: video.contentFormat) {
-            FormatLogo(format: format, size: 14)
+        if video.service == .youtube,
+           let format = ContentFormat(label: video.contentFormat),
+           format == .short {
+            FormatLogo(format: .short, size: 14)
         } else {
             ServiceLogo(service: video.service, size: 14)
         }
@@ -275,4 +266,11 @@ private let maxExtrapolationMs = 8_000
 private func extrapolatedWatchedMs(_ video: HistoryVideo, at now: Date) -> Int {
     let elapsedMs = Int(max(0, now.timeIntervalSince(video.lastWatchedAt)) * 1000)
     return video.watchedMs + min(elapsedMs, maxExtrapolationMs)
+}
+
+/// Non-fixed-length videos (for example live streams) have no truthful
+/// completion ratio. Show an activity bar instead: fraction of one hour
+/// watched, capped at full width.
+private func nonFixedLengthBarFraction(_ video: HistoryVideo) -> Double {
+    min(1, Double(video.watchedMs) / 3_600_000)
 }

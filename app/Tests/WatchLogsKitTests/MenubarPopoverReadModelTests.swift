@@ -532,16 +532,16 @@ struct MenubarPopoverReadModelTests {
     func readTimeContentFormatRules() {
         #expect(EventStore.readTimeContentFormat(stored: "standard", url: "https://youtube.com/shorts/abc") == "short")
         #expect(EventStore.readTimeContentFormat(stored: "standard", url: "https://youtube.com/watch?v=abc") == "standard")
-        // A live Short keeps "live" — that format is already trustworthy.
-        #expect(EventStore.readTimeContentFormat(stored: "live", url: "https://youtube.com/shorts/abc") == "live")
+        // Legacy "live" rows are normalised away.
+        #expect(EventStore.readTimeContentFormat(stored: "live", url: "https://youtube.com/shorts/abc") == "short")
     }
 
-    @Test("History has no coverage for a live View")
-    func historyLiveViewHasNoCoverage() throws {
+    @Test("History has no coverage for very long sliding-window durations")
+    func historyLongWindowHasNoCoverage() throws {
         let start = local(2024, 1, 1, 12).epochMillis
         let store = try EventStore(path: ":memory:")
         _ = try store.record(flush(sentAt: start - 1, views: []), serverTime: start - 1)
-        let view = FlushView(viewId: "live", service: "youtube", contentFormat: "live", videoId: "v", url: "https://example.com/v", durationSec: 120, adapterId: "youtube", tabId: 1, startedAt: start, open: false, events: [
+        let view = FlushView(viewId: "window", service: "youtube", contentFormat: "standard", videoId: "v", url: "https://example.com/v", durationSec: 50_390, adapterId: "youtube", tabId: 1, startedAt: start, open: false, events: [
             RawEvent(seq: 1, type: .play, t: start, pos: 0), RawEvent(seq: 2, type: .viewEnded, t: start + 60_000, pos: 60, reason: "nav"),
         ])
         _ = try store.record(flush(sentAt: start + 60_000, views: [view]), serverTime: start + 60_000)

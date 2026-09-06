@@ -32,9 +32,9 @@ public enum SegmentComputer {
     /// Buffering slack credited to an unmonitored gap on top of its media advance.
     static let stallGraceMs = 60_000
 
-    public static func segments(viewId: String, events: [RawEvent], isLive: Bool = false) -> [Segment] {
+    public static func segments(viewId: String, events: [RawEvent]) -> [Segment] {
         let normalized = normalize(events)
-        var machine = Machine(viewId: viewId, isLive: isLive)
+        var machine = Machine(viewId: viewId)
         for event in normalized {
             machine.apply(event)
         }
@@ -74,7 +74,6 @@ private struct Machine {
     }
 
     let viewId: String
-    let isLive: Bool
 
     /// The last Event's instant and media position, for spotting an
     /// unmonitored gap while a Segment is open.
@@ -114,9 +113,8 @@ private struct Machine {
 
     private var viewEnded = false
 
-    init(viewId: String, isLive: Bool) {
+    init(viewId: String) {
         self.viewId = viewId
-        self.isLive = isLive
     }
 
     private var foreground: Bool { visible || pip }
@@ -263,7 +261,7 @@ private struct Machine {
     /// this is a long gap whose two ends both carry a media position and those
     /// positions say the player barely moved.
     private func believable(_ elapsed: Int, at event: RawEvent) -> Int {
-        guard !isLive, elapsed > SegmentComputer.maxHeartbeatGapMs,
+        guard elapsed > SegmentComputer.maxHeartbeatGapMs,
               let lastSeenPos, let pos = event.pos else { return elapsed }
         let mediaAdvanceMs = Int(max(0, pos - lastSeenPos) * 1000)
         return mediaAdvanceMs + SegmentComputer.stallGraceMs

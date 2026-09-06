@@ -1,4 +1,4 @@
-// The YouTube Adapter: watch pages, Shorts, live, and embeds on both of
+// The YouTube Adapter: watch pages, Shorts, and embeds on both of
 // YouTube's hosts.
 //
 // The id always comes off the URL, never the page. That is the whole reason
@@ -31,27 +31,16 @@ const AUTHOR_SELECTORS = [
   ".ytp-title-channel-name",
 ];
 
-/**
- * The schema.org marker YouTube emits only on an actual broadcast.
- *
- * Not `.ytp-live-badge`: that element is in every watch page's player markup,
- * hidden, so its presence says nothing and a visibility check would need CSS
- * that a saved fixture does not have.
- */
-const LIVE_MARKER = "[itemprop=isLiveBroadcast]";
-
 /** `/shorts/ID`, `/live/ID`, `/embed/ID` — the shapes that carry the id in the path. */
 const PATH_SHAPES = [
   { prefix: "/shorts/", contentFormat: "short" },
-  { prefix: "/live/", contentFormat: "live" },
-  { prefix: "/embed/", contentFormat: null, embedded: true },
+  { prefix: "/live/", contentFormat: "standard" },
+  { prefix: "/embed/", contentFormat: "standard", embedded: true },
 ];
 
 /**
  * What this URL says about the video, or null if it names no video at all.
  *
- * `contentFormat: null` means "the page has to say" — a watch page or an embed
- * is standard unless the live marker is there.
  */
 function fromUrl(url) {
   // YouTube Music is a different product on the same domain, with its own
@@ -62,7 +51,7 @@ function fromUrl(url) {
     // A URL can carry both a video and the playlist it was opened from. The
     // video is what is playing.
     const videoId = url.searchParams.get("v");
-    return videoId ? { videoId, contentFormat: null } : null;
+    return videoId ? { videoId, contentFormat: "standard" } : null;
   }
 
   for (const shape of PATH_SHAPES) {
@@ -89,15 +78,14 @@ export const YouTubeAdapter = {
         const url = new URL(location.href);
         const shape = fromUrl(url) ?? {};
         const title = firstText(document, TITLE_SELECTORS);
-        const contentFormat =
-          shape.contentFormat ?? (document.querySelector(LIVE_MARKER) ? "live" : "standard");
+        const contentFormat = shape.contentFormat ?? "standard";
         return {
           videoId: shape.videoId,
           contentFormat,
           ...(shape.embedded ? { embedded: true } : {}),
           ...(title === undefined ? {} : { title }),
           ...withAuthor(document),
-          ...withDuration(document, contentFormat),
+          ...withDuration(document),
           confidence: confidenceOf(shape.videoId, title),
         };
       },
@@ -119,15 +107,12 @@ function withAuthor(document) {
  * the `<video>` element's `.duration` is stuck at `NaN` — the state a player
  * created in a background tab is left in (#41).
  *
- * Gated on `contentFormat`, not re-detected: a live stream carries a nonsense
- * placeholder here (`PT2026691M52S`, ~3.85 years), and reporting that would
- * make a live View look like it has a sliding-window duration. Shorts and
- * embeds have no such tag and fall through to the element / mediaSession chain.
+ * Reported only when it looks like a real fixed length. Very large values are
+ * usually YouTube's sliding DVR window, not a video's duration.
  */
-function withDuration(document, contentFormat) {
-  if (contentFormat === "live") return {};
+function withDuration(document) {
   const durationSec = parseIsoDuration(
     document.querySelector('meta[itemprop="duration"]')?.getAttribute("content"),
   );
-  return durationSec === null ? {} : { durationSec };
+  return durationSec !== null && durationSec <= 12 * 60 * 60 ? { durationSec } : {};
 }

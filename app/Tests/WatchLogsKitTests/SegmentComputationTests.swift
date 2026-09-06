@@ -505,8 +505,8 @@ struct SegmentComputationTests {
         #expect(computed[0].durationMs == 10_000)
     }
 
-    @Test("a live stream with no reported position still accrues wall-clock time")
-    func liveStreamHasNullPositions() {
+    @Test("a stream with no reported position still accrues wall-clock time")
+    func nullPositionsStillAccrueWallClockTime() {
         var log = EventLogBuilder()
         log.play(0)
         log.sample(5_000)

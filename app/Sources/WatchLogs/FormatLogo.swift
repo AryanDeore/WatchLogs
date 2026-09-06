@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The three YouTube content formats, drawn as marks instead of spelled out.
+// YouTube content formats, drawn as marks instead of spelled out.
 // The words "videos / shorts / live" needed a 40pt gutter, which pushed the
 // breakdown bars out of line with the service bar above them; a mark needs
 // the same 15pt slot the service logo already occupies, so every bar in the
@@ -12,8 +12,8 @@ import SwiftUI
 enum ContentFormat: String, CaseIterable {
     case video, short, live
 
-    /// `TotalsSlice.contentFormat` uses "standard"/"short"/"live"; the older
-    /// prototype label was "videos"/"shorts"/"live". Both land here.
+    /// `TotalsSlice.contentFormat` is `"standard"`/`"short"`. Legacy `"live"`
+    /// rows are still accepted for backward display compatibility.
     init?(label: String) {
         switch label {
         case "video", "videos", "standard": self = .video
@@ -52,14 +52,15 @@ private struct VideoMark: View {
     let size: CGFloat
 
     var body: some View {
-        Circle()
+        // Match the YouTube brand mark used by `ServiceLogo`.
+        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
             .fill(youTubeRed)
-            .frame(width: size * 0.90, height: size * 0.90)
+            .frame(width: size, height: size * 0.72)
             .overlay {
                 PlayTriangle()
                     .fill(.white)
-                    .frame(width: size * 0.26, height: size * 0.30)
-                    .offset(x: size * 0.03)
+                    .frame(width: size * 0.24, height: size * 0.28)
+                    .offset(x: size * 0.02)
             }
             .frame(width: size, height: size)
     }

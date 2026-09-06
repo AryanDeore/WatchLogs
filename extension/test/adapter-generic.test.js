@@ -80,8 +80,8 @@ test("the title is og:title, then the browser tab, and they are told apart", () 
   assert.equal(withoutOg.documentTitle, "The Real Title | Example");
 });
 
-test("a media element with no finite length is a livestream", () => {
-  assert.equal(read("https://example.com/v", { duration: Infinity }).contentFormat, "live");
+test("generic fallback always reports standard contentFormat", () => {
+  assert.equal(read("https://example.com/v", { duration: Infinity }).contentFormat, "standard");
   assert.equal(read("https://example.com/v", { duration: 213 }).contentFormat, "standard");
   assert.equal(read("https://example.com/v", { duration: NaN }).contentFormat, "standard");
 });

@@ -33,14 +33,14 @@ test("a video opened from a playlist is still that video, not the playlist", () 
   assert.equal(read("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123&index=4").videoId, "dQw4w9WgXcQ");
 });
 
-test("shorts and live take their id from the path and say what they are", () => {
+test("shorts and /live paths take their id from the path", () => {
   assert.deepEqual(
     (({ videoId, contentFormat }) => ({ videoId, contentFormat }))(read("https://www.youtube.com/shorts/x8kL9mQ2vNc")),
     { videoId: "x8kL9mQ2vNc", contentFormat: "short" },
   );
   assert.deepEqual(
     (({ videoId, contentFormat }) => ({ videoId, contentFormat }))(read("https://www.youtube.com/live/jfKfPfyJRdk")),
-    { videoId: "jfKfPfyJRdk", contentFormat: "live" },
+    { videoId: "jfKfPfyJRdk", contentFormat: "standard" },
   );
 });
 
@@ -51,17 +51,6 @@ test("an embed knows it is in someone else's page, on either host", () => {
     assert.equal(snapshot.contentFormat, "standard", host);
     assert.equal(snapshot.embedded, true, host);
   }
-});
-
-// The live badge element sits in every watch page's player markup, hidden, so
-// its presence proves nothing. This is the schema.org marker YouTube only
-// emits on an actual broadcast.
-test("a watch page carrying the live marker reads as live", () => {
-  const live = read("https://www.youtube.com/watch?v=jfKfPfyJRdk", {
-    ...WATCH_PAGE,
-    "[itemprop=isLiveBroadcast]": "True",
-  });
-  assert.equal(live.contentFormat, "live");
 });
 
 // The `<video>` element's `.duration` never resolves for a player YouTube built
@@ -75,14 +64,13 @@ test("a watch page's duration markup becomes the View's length", () => {
   assert.equal(snapshot.durationSec, 214);
 });
 
-test("a live stream's duration placeholder is never reported as a length", () => {
-  const live = read("https://www.youtube.com/watch?v=jfKfPfyJRdk", {
+test("a very large duration placeholder is never reported as a fixed length", () => {
+  const snapshot = read("https://www.youtube.com/watch?v=jfKfPfyJRdk", {
     ...WATCH_PAGE,
-    "[itemprop=isLiveBroadcast]": "True",
     'meta[itemprop="duration"]': { content: "PT2026691M52S" },
   });
-  assert.equal(live.contentFormat, "live");
-  assert.equal("durationSec" in live, false);
+  assert.equal(snapshot.contentFormat, "standard");
+  assert.equal("durationSec" in snapshot, false);
 });
 
 test("a page with no duration markup reports no length, not zero", () => {
