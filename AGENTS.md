@@ -12,6 +12,10 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Extension versioning
+
+If you modify any file under `extension/`, increment `extension/manifest.json` `version`.
+
 ## How to explain things to me
 
 When walking me through a decision, a tradeoff, or how something works:

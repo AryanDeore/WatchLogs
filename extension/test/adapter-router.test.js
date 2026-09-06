@@ -38,11 +38,12 @@ test("a site nobody claimed gets no Adapter and its own domain as the Service", 
   assert.equal(bound.adapter, null);
   assert.equal(bound.adapterId, null);
   assert.equal(bound.service, "bbc.co.uk");
+  assert.equal(bound.adapterCovered, false);
 });
 
 // The veto is the point of `matches`: the host matched, and the Adapter looked
 // at the URL and said this is not a page it can read.
-test("an Adapter that steps aside leaves the frame to the generic fallback", () => {
+test("an Adapter that steps aside leaves no Adapter bound but still marks the page as Adapter-covered", () => {
   for (const [url, service] of [
     ["https://www.youtube.com/@RickAstleyYT", "youtube.com"],
     ["https://music.youtube.com/watch?v=abc", "youtube.com"],
@@ -52,6 +53,7 @@ test("an Adapter that steps aside leaves the frame to the generic fallback", () 
     assert.equal(bound.adapter, null, url);
     assert.equal(bound.adapterId, null, url);
     assert.equal(bound.service, service, url);
+    assert.equal(bound.adapterCovered, true, url);
   }
 });
 

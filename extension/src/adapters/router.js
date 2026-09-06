@@ -58,15 +58,25 @@ function walkHost(hostname, hostMap) {
  * on it (a channel page, a browse page, YouTube Music). A veto falls through to
  * the generic fallback exactly as a missing Adapter does.
  *
- * @returns {{ adapter: object|null, adapterId: string|null, service: string }}
+ * @returns {{
+ *   adapter: object|null,
+ *   adapterId: string|null,
+ *   service: string,
+ *   adapterCovered: boolean,
+ * }}
  */
 export function bindAdapter({ location, document }, hostMap = HOST_MAP) {
   const url = new URL(location.href);
   const claimed = walkHost(url.hostname, hostMap);
 
-  if (!claimed || (claimed.matches && !claimed.matches(url))) {
-    return { adapter: null, adapterId: null, service: serviceFor(url.href) };
+  if (!claimed) {
+    return { adapter: null, adapterId: null, service: serviceFor(url.href), adapterCovered: false };
   }
+
+  if (claimed.matches && !claimed.matches(url)) {
+    return { adapter: null, adapterId: null, service: serviceFor(url.href), adapterCovered: true };
+  }
+
   return {
     adapter: claimed.create({ location, document }),
     adapterId: claimed.id,
@@ -74,6 +84,7 @@ export function bindAdapter({ location, document }, hostMap = HOST_MAP) {
     // Adapter can get wrong, and the only place the fallback and the shipped
     // names have to agree.
     service: claimed.service,
+    adapterCovered: true,
   };
 }
 
