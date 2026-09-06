@@ -535,6 +535,12 @@
       // shape opens no View at all.
       if (!bound.adapter && !isVisiblyPlayable(media)) return null;
 
+      // On a site that ships an Adapter, "no Adapter bound" can mean either
+      // "this site has no Adapter" (generic fallback allowed) or "this site's
+      // Adapter looked at this URL and said it names no video" (generic
+      // fallback forbidden: home-feed hover previews are not Views).
+      if (!bound.adapter && bound.adapterCovered) return null;
+
       // Two players in one frame are two videos — unless an Adapter is bound,
       // in which case they are the pre-roll ad and the video it interrupted,
       // and the Adapter says both of them are the one video this page is
