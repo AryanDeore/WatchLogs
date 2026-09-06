@@ -665,6 +665,170 @@ function hideReplay() {
   el('replay-item').classList.remove('active');
 }
 
+// --- Day Boundary Diagnostics ----------------------------------------------
+
+async function showDayBoundary() {
+  hideLint();
+  hideReplay();
+  hideDayBoundary(); // Clear any previous state
+  
+  state.currentTable = null;
+  el('table-title').textContent = '📅 Day Boundary Diagnostics';
+  el('global-filter').disabled = true;
+  el('empty-state').style.display = 'none';
+  el('data-table').style.display = 'none';
+  el('pager').style.display = 'none';
+  el('day-boundary-panel').hidden = false;
+  el('day-boundary-item').classList.add('active');
+  
+  el('day-boundary-panel').innerHTML = '<p class="replay-loading">…</p>';
+  
+  try {
+    const data = await fetchJson('/api/day-boundary');
+    renderDayBoundary(data);
+    setStatus(true);
+  } catch (err) {
+    el('day-boundary-panel').innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function hideDayBoundary() {
+  el('day-boundary-panel').hidden = true;
+  el('day-boundary-item').classList.remove('active');
+  el('data-table').style.display = '';
+  el('pager').style.display = '';
+}
+
+function renderDayBoundary(data) {
+  const { incident, timeline, segments, crossingSegment, newestActivity, fixAnalysis, actualResult, expectedResult } = data;
+  
+  let html = '<div class="day-boundary-content">';
+  
+  // Incident Summary
+  html += '<section class="replay-section">';
+  html += '<h2>2026-09-06 Day Boundary Incident</h2>';
+  html += `<p>${escapeHtml(incident.description)}</p>`;
+  html += '<table class="replay-table"><tbody>';
+  html += `<tr><td>Date</td><td>${escapeHtml(incident.date)}</td></tr>`;
+  html += `<tr><td>Target Hour</td><td class="mono">${escapeHtml(incident.targetHour)}</td></tr>`;
+  html += `<tr><td>Critical Flush</td><td class="mono">${escapeHtml(incident.firstFlush)}</td></tr>`;
+  html += `<tr><td>Late Flush</td><td class="mono">${escapeHtml(incident.lateFlush)}</td></tr>`;
+  html += '</tbody></table>';
+  html += '</section>';
+  
+  // Timeline
+  html += '<section class="replay-section">';
+  html += '<h3>Timeline</h3>';
+  html += '<table class="replay-table"><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody>';
+  timeline.forEach(event => {
+    const rowClass = event.event.includes('⚠') ? ' class="warn-row"' : '';
+    html += `<tr${rowClass}><td class="mono">${escapeHtml(event.time)}</td><td>${escapeHtml(event.event)}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  html += '</section>';
+  
+  // Crossing Segment Analysis
+  if (crossingSegment) {
+    html += '<section class="replay-section">';
+    html += '<h3>Crossing Segment Analysis</h3>';
+    html += '<table class="replay-table"><tbody>';
+    html += `<tr><td>Start</td><td class="mono">${escapeHtml(crossingSegment.start)}</td></tr>`;
+    html += `<tr><td>End</td><td class="mono">${escapeHtml(crossingSegment.end)}</td></tr>`;
+    html += `<tr><td>View ID</td><td class="mono">${escapeHtml(crossingSegment.viewId)}</td></tr>`;
+    html += `<tr><td>In DB at 04:00:31?</td><td><strong>${crossingSegment.existedAtCriticalMoment ? '✅ YES' : '❌ NO'}</strong></td></tr>`;
+    html += '</tbody></table>';
+    
+    html += '<h4>Flushes for this view:</h4>';
+    html += '<table class="replay-table"><thead><tr><th>Time</th><th>Before Critical Moment?</th></tr></thead><tbody>';
+    crossingSegment.flushes.forEach(flush => {
+      html += `<tr><td class="mono">${escapeHtml(flush.time)}</td><td>${flush.beforeCriticalMoment ? '✅ Yes' : 'No'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    html += '</section>';
+  }
+  
+  // Newest Activity
+  if (newestActivity) {
+    html += '<section class="replay-section">';
+    html += '<h3>Newest Activity at Critical Moment</h3>';
+    html += '<table class="replay-table"><tbody>';
+    html += `<tr><td>Newest activity</td><td class="mono">${escapeHtml(newestActivity.timestamp)}</td></tr>`;
+    html += `<tr><td>Minutes from target</td><td class="mono">${newestActivity.minutesFromTarget} min</td></tr>`;
+    html += `<tr><td>Within boundary window?</td><td><strong>${newestActivity.withinBoundaryWindow ? '✅ YES' : '❌ NO'}</strong></td></tr>`;
+    html += '</tbody></table>';
+    html += '</section>';
+  }
+  
+  // Fix Analysis
+  if (fixAnalysis) {
+    html += '<section class="replay-section" style="background: #f0f9ff; padding: 1rem; border-left: 4px solid #3b82f6;">';
+    html += '<h3>✅ How the Fix Works</h3>';
+    html += '<table class="replay-table"><tbody>';
+    html += `<tr><td>Activity within window?</td><td><strong>${fixAnalysis.activityWithinWindow ? '✅ YES' : 'NO'}</strong></td></tr>`;
+    html += `<tr><td>Newest activity</td><td class="mono">${escapeHtml(fixAnalysis.newestActivity)}</td></tr>`;
+    html += `<tr><td>Target hour</td><td class="mono">${escapeHtml(fixAnalysis.targetHour)}</td></tr>`;
+    html += `<tr><td>Wait until</td><td class="mono">${escapeHtml(fixAnalysis.windowEnd)}</td></tr>`;
+    html += '</tbody></table>';
+    html += `<p style="margin-top: 1rem; font-weight: 600;">${escapeHtml(fixAnalysis.fixBehavior)}</p>`;
+    if (fixAnalysis.prevented) {
+      html += '<p style="color: #16a34a; font-weight: 600; margin-top: 0.5rem;">✅ This fix would have prevented the premature freeze</p>';
+    }
+    html += '</section>';
+  }
+  
+  // Results Comparison
+  html += '<section class="replay-section">';
+  html += '<h3>Results Comparison</h3>';
+  html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">';
+  
+  if (actualResult) {
+    html += '<div>';
+    html += '<h4 style="color: #dc2626;">❌ Actual (with bug)</h4>';
+    html += '<table class="replay-table"><tbody>';
+    html += `<tr><td>Day</td><td class="mono">${escapeHtml(actualResult.date)}</td></tr>`;
+    html += `<tr><td>Start</td><td class="mono">${escapeHtml(actualResult.start)}</td></tr>`;
+    html += `<tr><td>End</td><td class="mono"><strong style="color: #dc2626;">${escapeHtml(actualResult.end)}</strong></td></tr>`;
+    html += `<tr><td>Duration</td><td>${actualResult.durationHours} hours</td></tr>`;
+    html += '</tbody></table>';
+    html += '</div>';
+  }
+  
+  if (expectedResult) {
+    html += '<div>';
+    html += '<h4 style="color: #16a34a;">✅ Expected (with fix)</h4>';
+    html += '<table class="replay-table"><tbody>';
+    html += `<tr><td>Last activity</td><td class="mono">${escapeHtml(expectedResult.lastActivity)}</td></tr>`;
+    html += `<tr><td>Should end</td><td class="mono"><strong style="color: #16a34a;">${escapeHtml(expectedResult.shouldEndAt)}</strong></td></tr>`;
+    html += `<tr><td>Slide</td><td>+${expectedResult.slidMinutes} minutes</td></tr>`;
+    html += '</tbody></table>';
+    html += '</div>';
+  }
+  
+  html += '</div>';
+  html += '</section>';
+  
+  // Segments List
+  if (segments && segments.length > 0) {
+    html += '<section class="replay-section">';
+    html += '<h3>Segments at Critical Moment (04:00:31)</h3>';
+    html += `<p class="dim">${segments.length} segments in database before the critical flush</p>`;
+    html += '<table class="replay-table"><thead><tr><th>Start</th><th>End</th><th>Crosses 4 AM?</th></tr></thead><tbody>';
+    segments.slice(0, 15).forEach(seg => {
+      const rowClass = seg.crossesBoundary ? ' class="warn-row"' : '';
+      html += `<tr${rowClass}><td class="mono">${escapeHtml(seg.start)}</td><td class="mono">${escapeHtml(seg.end)}</td><td>${seg.crossesBoundary ? '✅ YES' : ''}</td></tr>`;
+    });
+    if (segments.length > 15) {
+      html += `<tr><td colspan="3" class="dim">... and ${segments.length - 15} more</td></tr>`;
+    }
+    html += '</tbody></table>';
+    html += '</section>';
+  }
+  
+  html += '</div>';
+  
+  el('day-boundary-panel').innerHTML = html;
+}
+
 // --- Polling ---------------------------------------------------------------
 
 function startPolling() {
@@ -701,6 +865,10 @@ el('lint-item').addEventListener('click', () => {
 
 el('replay-item').addEventListener('click', () => {
   if (!state.showingReplay) showReplay().catch(showError);
+});
+
+el('day-boundary-item').addEventListener('click', () => {
+  showDayBoundary().catch(showError);
 });
 
 el('replay-results').addEventListener('click', (e) => {

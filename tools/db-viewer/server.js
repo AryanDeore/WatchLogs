@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { openReadOnly, parseArgs, parseSince, resolveDbPath } from '../lib/database.js';
 import { implicatedWatchedMs, runChecks } from '../lint/checks.js';
 import { findViews, replayBinary, replayView } from './replay.js';
+import { analyzeDayBoundary } from './day-boundary-diagnostics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -200,6 +201,9 @@ const server = http.createServer((req, res) => {
     }
     if (url.pathname === '/api/replay/available') {
       return sendJson(res, 200, { available: replayBinary() !== null });
+    }
+    if (url.pathname === '/api/day-boundary') {
+      return sendJson(res, 200, analyzeDayBoundary(db));
     }
     const columnsMatch = /^\/api\/tables\/([^/]+)\/columns$/.exec(url.pathname);
     if (columnsMatch) {
