@@ -85,6 +85,19 @@ export async function hidePage(context, page) {
   );
 }
 
+/** The other side of {@link hidePage}: hand the content-script world back the visible state it started with. */
+export async function showPage(context, page) {
+  await inContentWorld(
+    context,
+    page,
+    `
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+      Object.defineProperty(document, "hidden", { value: false, configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    `,
+  );
+}
+
 /**
  * Put `page`'s content-script world through what a closed laptop lid does to
  * it: the wall clock jumps by `ms` while the player's own clock stands still.

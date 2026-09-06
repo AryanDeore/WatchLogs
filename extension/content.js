@@ -332,6 +332,13 @@
         viewId,
         pos: positionOf(viewId),
       });
+      // A tab Chromium froze while hidden can hold a `<video>` whose duration
+      // never resolved — the browser drops events a frozen document was not
+      // running to receive, and nothing else ever asks again. Coming into view
+      // is the one moment that duration is trustworthy again, so it is exactly
+      // the moment to re-describe every open player rather than trust whatever
+      // `metadataDiff` last had to say.
+      if (visible) scheduleMetadata();
       persistAll(true);
     }
 

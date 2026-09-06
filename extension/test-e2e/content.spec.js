@@ -17,7 +17,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startStubServer } from "./stub-server.mjs";
-import { launchExtension, hidePage, suspendPage } from "./extension.mjs";
+import { launchExtension, hidePage, showPage, suspendPage } from "./extension.mjs";
 import { uniqueTag, taggedUrl, viewsTagged, eventsTagged, viewsSince, waitUntil } from "./helpers.mjs";
 
 let server;
@@ -199,6 +199,61 @@ test("a hidden tab reports visible:false, and the wire never says background", {
     await page.close();
   }
 });
+
+test(
+  "coming back into view re-describes the player, even with no heartbeat to catch it",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      // Open the View, then pause it: no heartbeat runs for a paused player, so
+      // the only thing that can catch a metadata change made while hidden is
+      // the fix under test, not the beat that would otherwise paper over it.
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "play"), {
+        timeoutMs: 15_000,
+      });
+      await page.evaluate(() => document.getElementById("v").pause());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "pause"), {
+        timeoutMs: 15_000,
+      });
+
+      await hidePage(ext.context, page);
+
+      // `mediaSession.metadata` has no change event of its own — nothing but a
+      // fresh `describe()` call ever reads it again. A tab Chromium actually
+      // freezes can hold a `<video>` whose real length only resolves while
+      // hidden; this stands in for that with the one field guaranteed not to
+      // be caught by anything else already watching (title has its own
+      // MutationObserver; this doesn't).
+      const before = eventsTagged(server, tag).filter((event) => event.type === "metadataChange").length;
+      await page.evaluate(() => {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: "Learned While Hidden", artist: "Its Channel" });
+      });
+
+      // Long enough that anything else already watching would have reported
+      // it by now, paused and hidden as the player is.
+      await page.waitForTimeout(2000);
+      assert.equal(
+        eventsTagged(server, tag).filter((event) => event.type === "metadataChange").length,
+        before,
+        "nothing should have reported the change yet — becoming visible hasn't happened",
+      );
+
+      await showPage(ext.context, page);
+
+      const report = await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "metadataChange").at(before),
+        { timeoutMs: 15_000, message: "expected a metadataChange once the tab came back into view" },
+      );
+      assert.equal(report.changed.title, "Learned While Hidden");
+    } finally {
+      await page.close();
+    }
+  },
+);
 
 test("rate changes ride the wire without inflating the sample cadence", { timeout: 30_000 }, async () => {
   const tag = uniqueTag();
