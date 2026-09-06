@@ -42,12 +42,14 @@
    * `action` is null where the event only means "re-read the element".
    * `flush` marks the ones worth waking the worker for straight away, rather
    * than waiting for the next 5-second beat.
+   * `needsAdvance` marks the ones that only mean what they say if the player
+   * is actually moving — see `vouched`.
    */
   const MEDIA_EVENTS = {
     loadedmetadata: {},
     durationchange: {},
-    play: { action: () => ({ type: "PLAY" }) },
-    playing: { action: () => ({ type: "PLAY" }) },
+    play: { action: () => ({ type: "PLAY" }), needsAdvance: true },
+    playing: { action: () => ({ type: "PLAY" }), needsAdvance: true },
     pause: { action: () => ({ type: "PAUSE" }), flush: true },
     ended: { action: () => ({ type: "MEDIA_ENDED" }), flush: true },
     ratechange: { action: (fact) => ({ type: "RATE", rate: fact.rate }) },
@@ -93,6 +95,12 @@
           pos: event.target.currentTime,
           rate: event.target.playbackRate,
           visible: document.visibilityState === "visible",
+          // `isAdvancing`'s three inputs, snapshotted with the rest: whether a
+          // `play` was real is a fact about the instant it fired, and the
+          // element will have moved on by the time a queued fact is handled.
+          paused: event.target.paused,
+          ended: event.target.ended,
+          readyState: event.target.readyState,
         };
         if (helper) helper.handle(fact);
         else {
@@ -284,10 +292,30 @@
       if (!entry) return;
 
       const meaning = MEDIA_EVENTS[fact.kind];
-      if (meaning.action) act(fact, meaning.action(fact, entry), meaning.flush);
+      if (meaning.action && vouched(fact, meaning)) act(fact, meaning.action(fact, entry), meaning.flush);
       else refresh(fact.media, fact);
       persistAll();
       ensureTimer();
+    }
+
+    /**
+     * Does this event mean what it says?
+     *
+     * `play` fires when playback is *requested*, not when it happens. A player
+     * the browser has suspended — a tab opened in the background it never
+     * decoded a frame for — sits at `paused === false` with a `readyState`
+     * saying it has nothing to play, and its `currentTime` never moves.
+     * Recording that as playback banks Watched time for a video nobody watched
+     * (#40), and nothing arrives later to take it back: no `pause` is coming,
+     * because nothing ever started.
+     *
+     * So the Event is dropped and the beat is left to open the Segment when
+     * the player actually moves — at an instant it can vouch for, which is the
+     * same conservative boundary the App draws for any change it only learns
+     * about from a heartbeat.
+     */
+    function vouched(fact, meaning) {
+      return !meaning.needsAdvance || isAdvancing(fact);
     }
 
     function note(media, pos) {
@@ -347,8 +375,23 @@
 
     // --- The 5-second heartbeat --------------------------------------------------
 
+    /**
+     * A player that *wants* to play, whether or not it is getting anywhere.
+     *
+     * The beat used to run only while something was advancing, which left the
+     * one case that most needed watching unobserved: a suspended player sits
+     * at `paused === false` and never advances, so no beat ran, so nothing
+     * ever contradicted whatever the log last said about it (#40). Beating
+     * through it costs one sample every 5s — one a minute once the tab is
+     * throttled — and each one reports `playing: false`, which is the evidence
+     * the App needs to close a Segment that should never have stayed open.
+     */
+    function wantsToPlay(media) {
+      return !media.paused && !media.ended;
+    }
+
     function ensureTimer() {
-      const playing = [...tracked.keys()].some((media) => isAdvancing(media));
+      const playing = [...tracked.keys()].some(wantsToPlay);
       if (playing && sampleTimer === null) {
         sampleTimer = setInterval(tick, SAMPLE_MS);
         lastHeartbeatAt = Date.now();

@@ -148,7 +148,39 @@ test("hiding with no View open is still remembered, so the next `visible` lands"
   apply(s, { type: "PLAY", at: T0 + 3000, pos: 0 });
   apply(s, { type: "SHOW", at: T0 + 4000, pos: 1 });
 
-  assert.deepEqual(types(s, "view-1"), ["mediaFound", "play", "visible"]);
+  assert.deepEqual(types(s, "view-1"), ["mediaFound", "hidden", "play", "visible"]);
+});
+
+// `visibilitychange` fires only on a transition, so a tab that starts hidden
+// and stays hidden says nothing — and the App reads a View with no visibility
+// Event as one the user was looking at from the first instant. A video opened
+// in a background tab banked the whole stretch as Watched time (#40).
+test("a View born in a hidden tab says so in its own log", () => {
+  const s = initCapture(T0, { tabId: 41 });
+  apply(s, { type: "HIDE", at: T0 + 1000 });
+  apply(s, { type: "OPEN", at: T0 + 2000, viewId: "view-1", view: youtube });
+
+  assert.deepEqual(types(s, "view-1"), ["mediaFound", "hidden"]);
+});
+
+test("a View born in a tab the user is looking at says nothing extra", () => {
+  const s = initCapture(T0, { tabId: 41 });
+  apply(s, { type: "OPEN", at: T0 + 2000, viewId: "view-1", view: youtube });
+
+  assert.deepEqual(types(s, "view-1"), ["mediaFound"]);
+});
+
+// The beat is the Capture's own account of whether a player is moving. A
+// `pause` arriving after a `play` that `content.js` suppressed (the player was
+// not advancing) must still be recorded, or the App loses the one Event that
+// names the boundary exactly and has to fall back to the previous beat.
+test("a beat that reports playback keeps a later `pause` recordable", () => {
+  const s = initCapture(T0, { tabId: 41 });
+  apply(s, { type: "OPEN", at: T0, viewId: "view-1", view: youtube });
+  apply(s, { type: "SAMPLE", at: T0 + 5000, pos: 5, playing: true, visible: true });
+  apply(s, { type: "PAUSE", at: T0 + 7000, pos: 7 });
+
+  assert.deepEqual(types(s, "view-1"), ["mediaFound", "sample", "pause"]);
 });
 
 test("a seek records where it came from and where it went", () => {

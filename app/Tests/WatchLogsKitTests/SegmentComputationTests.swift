@@ -116,6 +116,44 @@ struct SegmentComputationTests {
         #expect(computed[0].durationMs == 10_000)
     }
 
+    /// Sept 5, 2:13 PM: a video opened in a background tab, left there for 15
+    /// minutes, then actually watched for ~2. History said 17m13s (#40).
+    ///
+    /// The tab never transitioned, so `visibilitychange` never fired and the
+    /// log carried no visibility Event at all — which this machine reads as
+    /// "the user was looking at it from the first instant". The Extension now
+    /// stamps the `hidden` at birth (`capture.js` `newView`), and the beat runs
+    /// for a player that only *wants* to play, so the suspended stretch reports
+    /// itself instead of being assumed. Neither the suspended stretch nor the
+    /// suppressed `play` may reach Watched time.
+    @Test("a video opened in a background tab banks no Watched time until the tab comes forward")
+    func backgroundTabOpenBanksNoWatchedTime() {
+        var log = EventLogBuilder()
+        log.mediaFound(0)
+        // Born hidden: the tab was never in the foreground to transition from.
+        log.hidden(0)
+        // 15 minutes of a player Chrome suspended: un-paused, never advancing.
+        // `content.js` suppresses the `play`, and every beat says so.
+        for beat in stride(from: 60_000, through: 840_000, by: 60_000) {
+            log.sample(beat, playing: false, visible: false, pos: 0)
+        }
+        // The user switches to the tab; playback actually starts.
+        log.visible(886_000, pos: 0)
+        for beat in stride(from: 891_000, through: 1_001_000, by: 5_000) {
+            log.sample(beat, playing: true, visible: true, pos: Double(beat - 886_000) / 1_000)
+        }
+        log.pause(1_001_000, pos: 115)
+
+        let computed = segments(log)
+        #expect(computed.count == 1)
+        #expect(computed[0].kind == .watched)
+        // The Segment opens at the beat that first confirmed playback, never at
+        // the `play` fifteen minutes earlier.
+        #expect(computed[0].wallStartMs == log.at(891_000))
+        #expect(computed[0].durationMs == 110_000)
+        #expect(computed.filter { $0.kind == .background }.isEmpty)
+    }
+
     @Test("losing the foreground splits watched into background with no wall-clock gap")
     func hiddenSplitsTheSegment() {
         var log = EventLogBuilder()

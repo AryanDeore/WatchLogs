@@ -176,6 +176,13 @@ function newView(capture, viewId, header) {
   capture.activeViewId = viewId;
   capture.lastFlushAckSeq[viewId] ??= 0;
   emit(capture, viewId, "mediaFound", {});
+  // A View born in a tab nobody is looking at has to say so in its own log.
+  // `visibilitychange` only ever fires on a *transition*, so a tab that starts
+  // hidden and stays hidden emits nothing at all — and the App reads a View
+  // with no visibility Event as one the user was looking at from the first
+  // instant (ADR 0003). A video opened in a background tab and left there
+  // banked the whole stretch as Watched time (#40).
+  if (!capture.tabVisible) emit(capture, viewId, "hidden", {});
   return view;
 }
 
@@ -326,6 +333,12 @@ export function apply(capture, action) {
       break;
 
     case "SAMPLE":
+      // The beat is the Capture's own observation of whether this player is
+      // moving, so `_playing` moves with it. Without this a `pause` arriving
+      // after a suppressed `play` (`vouched` in `content.js`) would be dropped
+      // as redundant against a `_playing` that never became true, costing the
+      // App the one Event that names the boundary exactly.
+      view._playing = !!action.playing;
       emit(capture, view.viewId, "sample", { playing: !!action.playing, visible: !!action.visible });
       break;
 
