@@ -12,6 +12,7 @@
 // a channel, a playlist, the home feed. Both step aside at bind time via
 // `matches()` and fall through to the generic fallback.
 
+import { parseIsoDuration } from "../identify.js";
 import { confidenceOf, firstText, observeTitle } from "./shared.js";
 
 /** Where the title sits, best first. A Short's heading is not the watch one. */
@@ -88,12 +89,15 @@ export const YouTubeAdapter = {
         const url = new URL(location.href);
         const shape = fromUrl(url) ?? {};
         const title = firstText(document, TITLE_SELECTORS);
+        const contentFormat =
+          shape.contentFormat ?? (document.querySelector(LIVE_MARKER) ? "live" : "standard");
         return {
           videoId: shape.videoId,
-          contentFormat: shape.contentFormat ?? (document.querySelector(LIVE_MARKER) ? "live" : "standard"),
+          contentFormat,
           ...(shape.embedded ? { embedded: true } : {}),
           ...(title === undefined ? {} : { title }),
           ...withAuthor(document),
+          ...withDuration(document, contentFormat),
           confidence: confidenceOf(shape.videoId, title),
         };
       },
@@ -108,4 +112,22 @@ export const YouTubeAdapter = {
 function withAuthor(document) {
   const author = firstText(document, AUTHOR_SELECTORS);
   return author === undefined ? {} : { author };
+}
+
+/**
+ * The real length off YouTube's own SEO markup, which stays correct even when
+ * the `<video>` element's `.duration` is stuck at `NaN` — the state a player
+ * created in a background tab is left in (#41).
+ *
+ * Gated on `contentFormat`, not re-detected: a live stream carries a nonsense
+ * placeholder here (`PT2026691M52S`, ~3.85 years), and reporting that would
+ * make a live View look like it has a sliding-window duration. Shorts and
+ * embeds have no such tag and fall through to the element / mediaSession chain.
+ */
+function withDuration(document, contentFormat) {
+  if (contentFormat === "live") return {};
+  const durationSec = parseIsoDuration(
+    document.querySelector('meta[itemprop="duration"]')?.getAttribute("content"),
+  );
+  return durationSec === null ? {} : { durationSec };
 }

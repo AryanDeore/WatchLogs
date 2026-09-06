@@ -64,6 +64,32 @@ test("a watch page carrying the live marker reads as live", () => {
   assert.equal(live.contentFormat, "live");
 });
 
+// The `<video>` element's `.duration` never resolves for a player YouTube built
+// in a background tab (#41), so the Adapter reads the length off the page's own
+// SEO markup instead.
+test("a watch page's duration markup becomes the View's length", () => {
+  const snapshot = read("https://www.youtube.com/watch?v=dQw4w9WgXcQ", {
+    ...WATCH_PAGE,
+    'meta[itemprop="duration"]': { content: "PT3M34S" },
+  });
+  assert.equal(snapshot.durationSec, 214);
+});
+
+test("a live stream's duration placeholder is never reported as a length", () => {
+  const live = read("https://www.youtube.com/watch?v=jfKfPfyJRdk", {
+    ...WATCH_PAGE,
+    "[itemprop=isLiveBroadcast]": "True",
+    'meta[itemprop="duration"]': { content: "PT2026691M52S" },
+  });
+  assert.equal(live.contentFormat, "live");
+  assert.equal("durationSec" in live, false);
+});
+
+test("a page with no duration markup reports no length, not zero", () => {
+  const snapshot = read("https://www.youtube.com/shorts/x8kL9mQ2vNc");
+  assert.equal("durationSec" in snapshot, false);
+});
+
 test("an Adapter that found an id but no title is not confident", () => {
   const snapshot = read("https://www.youtube.com/shorts/x8kL9mQ2vNc");
   assert.equal(snapshot.videoId, "x8kL9mQ2vNc");

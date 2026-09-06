@@ -12,6 +12,7 @@ import {
   isMediaSwap,
   metadataDiff,
   normalizeUrl,
+  parseIsoDuration,
   serviceFor,
 } from "../src/identify.js";
 
@@ -98,6 +99,30 @@ test("durationSec is null unless the player really knows it", () => {
   assert.equal(durationOf(Infinity), null);
   assert.equal(durationOf(NaN), null);
   assert.equal(durationOf(0), null);
+});
+
+// YouTube prints the real length in `<meta itemprop="duration" content="PT3M34S">`
+// for SEO, independent of the flaky `<video>.duration`. The subset it emits is
+// `PT` then any of `#H`, `#M`, `#S` — no fractions, no date part.
+test("parseIsoDuration reads YouTube's PT#H#M#S duration markup to seconds", () => {
+  assert.equal(parseIsoDuration("PT3M34S"), 214);
+  assert.equal(parseIsoDuration("PT45S"), 45);
+  assert.equal(parseIsoDuration("PT1H2M3S"), 3723);
+  assert.equal(parseIsoDuration("PT2H"), 7200);
+  // The parser is dumb on purpose: live's nonsense placeholder parses fine, and
+  // it is the YouTube Adapter — not this — that refuses to report it.
+  assert.equal(parseIsoDuration("PT2026691M52S"), 2026691 * 60 + 52);
+});
+
+test("parseIsoDuration returns null for anything outside that shape", () => {
+  assert.equal(parseIsoDuration("PT"), null);
+  assert.equal(parseIsoDuration("PT0S"), null);
+  assert.equal(parseIsoDuration(""), null);
+  assert.equal(parseIsoDuration(null), null);
+  assert.equal(parseIsoDuration(undefined), null);
+  assert.equal(parseIsoDuration("3:34"), null);
+  assert.equal(parseIsoDuration("P1DT2H"), null);
+  assert.equal(parseIsoDuration("PT3M34.5S"), null);
 });
 
 // Artwork is present on the metadata and dropped on the floor: #4 took the
