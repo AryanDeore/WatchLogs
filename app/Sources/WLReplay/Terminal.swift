@@ -128,7 +128,6 @@ enum Terminal {
         }
 
         var badges: [String] = []
-        if history.contentFormat == "live" { badges.append("live") }
         if history.embedded { badges.append("embedded") }
         let progress = history.coverage.map { String(format: "bar %.0f%%", $0 * 100) } ?? history.statusLabel
 

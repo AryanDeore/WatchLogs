@@ -46,6 +46,10 @@ frontend is plain JS with no build step, matching `extension/`'s convention.
   the `wl-replay` binary, so it is the app's own Segment computation rather than
   a second opinion; if it is not built the panel says so. See
   [`tools/README.md`](../README.md).
+- **Day Boundary** — boundary forensics for any date/hour. Pick `date`,
+  `target hour`, and `window min`, then run analysis: first post-target flush,
+  crossing segment timing, newest activity at decision time, fix-behavior
+  explanation, and actual-vs-expected day end.
 - **Left pane** — every table in the database with a live row count (the red
   bubble), refreshed every 2s. Click a table to view it.
 - **Columns** — drag a header to reorder it; click the 📍 to pin (lock) it to

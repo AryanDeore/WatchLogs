@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { openReadOnly, parseArgs, parseSince, resolveDbPath } from '../lib/database.js';
 import { implicatedWatchedMs, runChecks } from '../lint/checks.js';
 import { findViews, replayBinary, replayView } from './replay.js';
+import { analyzeDayBoundary } from './day-boundary-diagnostics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -157,7 +158,8 @@ const MIME = {
 };
 
 function serveStatic(req, res) {
-  const reqPath = req.url === '/' ? '/index.html' : req.url;
+  const pathname = new URL(req.url, `http://localhost:${port}`).pathname;
+  const reqPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.join(PUBLIC_DIR, path.normalize(reqPath).replace(/^(\.\.[/\\])+/, ''));
   fs.readFile(filePath, (err, data) => {
     if (err) {
@@ -200,6 +202,13 @@ const server = http.createServer((req, res) => {
     }
     if (url.pathname === '/api/replay/available') {
       return sendJson(res, 200, { available: replayBinary() !== null });
+    }
+    if (url.pathname === '/api/day-boundary') {
+      return sendJson(res, 200, analyzeDayBoundary(db, {
+        date: url.searchParams.get('date'),
+        targetHour: url.searchParams.get('targetHour'),
+        windowMinutes: url.searchParams.get('windowMinutes'),
+      }));
     }
     const columnsMatch = /^\/api\/tables\/([^/]+)\/columns$/.exec(url.pathname);
     if (columnsMatch) {

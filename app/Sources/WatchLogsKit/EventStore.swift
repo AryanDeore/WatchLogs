@@ -486,7 +486,9 @@ public final class EventStore: @unchecked Sendable {
     /// bare target hour because the straddling View flushed a beat late — a
     /// decision ADR 0001 forbids re-evaluating). A later call once the drain
     /// catches up, or ingest goes quiet, does the freeze with everything in.
-    private static let ingestCaughtUpMs = 120_000
+    /// Increased from 120s to 180s after 2026-09-06 incident where a segment
+    /// crossing the target hour arrived 36s after the activity ended.
+    private static let ingestCaughtUpMs = 180_000
 
     /// Freeze every Day whose boundary `now` confirms, starting from the
     /// current open Day, and return the (possibly advanced) open Day's start.
@@ -503,9 +505,9 @@ public final class EventStore: @unchecked Sendable {
             try database.run("INSERT INTO open_day (id, day_start_ms) VALUES (1, ?)", [.int(start.epochMillis)])
         }
 
-        if try backlogIsDraining(now: now) { return start }
-
         let targetHour = try targetHourRaw()
+        if try backlogIsDraining(now: now, dayStart: start, targetHour: targetHour, calendar: calendar) { return start }
+
         while let end = DayBoundary.confirmedEnd(
             dayStart: start,
             watchedIntervals: try watchedIntervals(since: start.epochMillis),
@@ -526,7 +528,13 @@ public final class EventStore: @unchecked Sendable {
     /// deciding against only part of it. Real-time playback fails the second
     /// test (its heartbeats keep activity within seconds of `now`); a genuine
     /// quiet spell fails the first (no Flushes arriving) — both still freeze.
-    private func backlogIsDraining(now: Date) throws -> Bool {
+    ///
+    /// Also prevents freezing when activity near the target hour might still be
+    /// in flight: a segment crossing the boundary can arrive 30-40 seconds after
+    /// the activity itself, racing with other flushes that trigger boundary checks.
+    /// The fix (2026-09-06): if recent activity is within the slide window of the
+    /// target hour, wait until the full slide window has elapsed before deciding.
+    private func backlogIsDraining(now: Date, dayStart: Date, targetHour: Int, calendar: Calendar) throws -> Bool {
         var lastFlushMs = 0
         try database.query("SELECT COALESCE(MAX(received_at_ms), 0) FROM flushes") { row in lastFlushMs = row.int(0) }
         guard lastFlushMs >= now.epochMillis - Self.ingestActiveWindowMs else { return false }
@@ -534,7 +542,28 @@ public final class EventStore: @unchecked Sendable {
         var newestActivityMs = 0
         try database.query("SELECT COALESCE(MAX(wall_end_ms), 0) FROM segments") { row in newestActivityMs = row.int(0) }
         try database.query("SELECT COALESCE(MAX(t_ms), 0) FROM raw_events") { row in newestActivityMs = max(newestActivityMs, row.int(0)) }
-        return newestActivityMs < now.epochMillis - Self.ingestCaughtUpMs
+        
+        // Standard backlog check: old activity still draining
+        if newestActivityMs < now.epochMillis - Self.ingestCaughtUpMs {
+            return true
+        }
+        
+        // Special case: activity near the target hour might still be in flight.
+        // A segment crossing the boundary can arrive seconds after the activity
+        // ends, racing with this boundary check. Don't freeze until enough time
+        // has elapsed for all crossing segments to arrive.
+        let target = DayBoundary.nextOccurrence(strictlyAfter: dayStart, hour: targetHour, calendar: calendar)
+        let boundaryWindowMs = Int(DayBoundary.idleThreshold * 1000)  // 90 minutes
+        
+        if newestActivityMs > target.epochMillis - boundaryWindowMs &&
+           newestActivityMs < target.epochMillis + boundaryWindowMs {
+            // Activity exists near the boundary - don't freeze until the full
+            // slide window after the target has elapsed, giving late flushes
+            // time to arrive.
+            return now < target.addingTimeInterval(DayBoundary.idleThreshold)
+        }
+        
+        return false
     }
 
     /// Record `[dayStart, dayEnd)`'s boundary into `rolled_day` — never
@@ -997,6 +1026,10 @@ public final class EventStore: @unchecked Sendable {
     /// recent Views", which is what you want when something just went wrong and
     /// you do not yet know its name.
     ///
+    /// Generic fallback rows that never produced watched Segments are left out.
+    /// They are capture noise (for example a page-level autoplay blip on a site
+    /// with no Adapter), useful in raw tables but not in a human-facing picker.
+    ///
     /// Every word in the query has to appear somewhere in the View's id, video
     /// id, title or author — order does not matter, and punctuation-only words
     /// are dropped. That last part is not fussiness: a title reading
@@ -1032,6 +1065,13 @@ public final class EventStore: @unchecked Sendable {
                    previous_view_id
             FROM views
             WHERE \(clause)
+              AND NOT (
+                adapter_id IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM segments s
+                  WHERE s.view_id = views.view_id AND s.kind = 'watched'
+                )
+              )
             ORDER BY started_at_ms DESC
             LIMIT ?
             """,
@@ -1185,11 +1225,7 @@ public final class EventStore: @unchecked Sendable {
     /// the App stays idempotent — and it is what replaces an open View's
     /// `provisional` tail.
     private func recomputeSegments(viewId: String) throws {
-        var isLive = false
-        try database.query("SELECT content_format FROM views WHERE view_id = ?", [.text(viewId)]) { row in
-            isLive = row.text(0) == "live"
-        }
-        let segments = SegmentComputer.segments(viewId: viewId, events: try loadEvents(viewId: viewId), isLive: isLive)
+        let segments = SegmentComputer.segments(viewId: viewId, events: try loadEvents(viewId: viewId))
         try database.run("DELETE FROM segments WHERE view_id = ?", [.text(viewId)])
         for segment in segments {
             try database.run(
@@ -1431,7 +1467,7 @@ public final class EventStore: @unchecked Sendable {
         }
         return groups.map { key, group -> HistoryVideo in
             let coverage: Double?
-            if group.contentFormat == "live" || group.durationSec == nil || group.durationSec! <= 0 {
+            if !Self.hasFixedLengthDuration(durationSec: group.durationSec) {
                 coverage = nil
             } else {
                 let duration = group.durationSec!
@@ -1478,12 +1514,16 @@ public final class EventStore: @unchecked Sendable {
     }
 
     /// A YouTube Short is a View whose page path is `/shorts/<id>`. The current
-    /// Adapter-less extension slice reports every non-live View as "standard", so
+    /// Adapter-less extension slice reports every non-Short View as "standard", so
     /// the "short" format is recovered from the URL at read time — the same
-    /// read-time mapping `ServiceDisplayBucket.from` uses for the service. A
-    /// stored "live" already carries its own format and is left untouched.
+    /// read-time mapping `ServiceDisplayBucket.from` uses for the service.
+    ///
+    /// Legacy `"live"` rows are normalised to `"standard"`: that label no longer
+    /// carries behaviour.
     static func readTimeContentFormat(stored: String, url: String) -> String {
-        stored == "standard" && url.contains("/shorts/") ? "short" : stored
+        let normalized = stored == "live" ? "standard" : stored
+        if normalized == "standard" && url.contains("/shorts/") { return "short" }
+        return normalized
     }
 
     /// A generic-fallback View is identified by hashing the page's own address
@@ -1504,6 +1544,17 @@ public final class EventStore: @unchecked Sendable {
     static func readTimeVideoId(stored: String, url: String) -> String {
         guard stored.hasPrefix("sha1:"), let recovered = youTubeVideoId(fromURL: url) else { return stored }
         return recovered
+    }
+
+    /// Whether a reported duration behaves like a real fixed video length.
+    ///
+    /// A sliding DVR window is finite in the schema but not a true video length:
+    /// values in that shape (for example 14h+ radio windows) would render a
+    /// meaningless coverage bar. WatchLogs treats only positive durations up to
+    /// 12 hours as fixed-length.
+    private static func hasFixedLengthDuration(durationSec: Double?) -> Bool {
+        guard let durationSec, durationSec > 0 else { return false }
+        return durationSec <= 12 * 60 * 60
     }
 
     /// The id a bound `YouTubeAdapter` would report for `url`, mirroring its own

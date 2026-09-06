@@ -7,6 +7,7 @@ the app writes, and none of it writes to that database.
 |---|---|
 | [`db-viewer`](db-viewer/) | *what is in the database right now?* — every table, live, filterable, with the Lint and Replay tabs |
 | [`lint`](lint/) | *is any of this impossible?* — invariant checks over the stored data |
+| [`replay-boundary-verdict.js`](replay-boundary-verdict.js) | *would this boundary have frozen or deferred?* — a red/green replay at the first post-target flush |
 | `wl-replay` (in [`app/Sources/WLReplay`](../app/Sources/WLReplay)) | *where did this number come from?* — one View, all the way down the pipeline, in the terminal or in db-viewer |
 
 ## Why these exist
@@ -87,3 +88,21 @@ you to wonder whether you are looking at a bug or at history.
 By default it works on a snapshot — the database and its write-ahead log copied
 to a temporary file — so it is a stable picture of one instant and can never
 touch data a running app owns. `--live` opts out.
+
+## `replay-boundary-verdict.js`
+
+A fast boundary yes/no check when "tests passed" is not enough confidence.
+It replays one boundary decision from stored data at the **first flush at or
+after target hour** and prints a single verdict:
+
+- `FIX WOULD WAIT/SLIDE ✅`
+- `WOULD ALLOW FREEZE AT/NEAR TARGET ⚠️`
+- `INCONCLUSIVE`
+
+```sh
+node tools/replay-boundary-verdict.js
+node tools/replay-boundary-verdict.js --date=2026-09-06 --targetHour=4 --windowMinutes=90
+```
+
+Defaults: `date = yesterday (local)`, `targetHour = day_settings.target_hour`
+(or `4`), `windowMinutes = 90`.

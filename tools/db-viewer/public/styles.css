@@ -565,3 +565,38 @@ td.linked {
   content: "→ ";
   opacity: 0.7;
 }
+
+/* Day Boundary Panel */
+
+#day-boundary-panel {
+  padding: 12px 20px 32px;
+  overflow-y: auto;
+}
+
+.day-boundary-content {
+  max-width: 1200px;
+}
+
+.day-boundary-content h2 {
+  margin-top: 0;
+  color: var(--text);
+  font-size: 1.5rem;
+}
+
+.day-boundary-content h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+.day-boundary-content h4 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+.day-boundary-content .replay-section {
+  margin-bottom: 2rem;
+}

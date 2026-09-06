@@ -114,4 +114,55 @@ struct ViewLookupTests {
         // Newest first, so the top of the list is where you just were.
         #expect(titles(try store.viewRecords(limit: 1)) == ["Third"])
     }
+
+    @Test("generic Views with no watched segments are hidden from lookup")
+    func unwatchedGenericViewsAreHidden() throws {
+        let store = try EventStore(path: ":memory:")
+        let start = 1_788_026_400_000
+        let flush = FlushEnvelope(
+            schemaVersion: 1,
+            flushId: UUID().uuidString,
+            sentAt: start,
+            agent: .init(extInstanceId: "ext-1", extVersion: "0.1.0", browser: "chrome", os: "macOS"),
+            views: [
+                FlushView(
+                    viewId: "noise",
+                    service: "google.com",
+                    videoId: "sha1:noise",
+                    url: "https://www.google.com/search?q=watchlogs",
+                    title: "watchlogs - Google Search",
+                    author: nil,
+                    tabId: 1,
+                    startedAt: start,
+                    open: false,
+                    events: [
+                        RawEvent(seq: 1, type: .mediaFound, t: start, pos: 0),
+                        RawEvent(seq: 2, type: .viewEnded, t: start + 1_000, pos: 0, reason: "nav"),
+                    ]
+                ),
+                FlushView(
+                    viewId: "real",
+                    service: "youtube",
+                    videoId: "vid-real",
+                    url: "https://youtube.com/watch?v=vid-real",
+                    title: "Real video",
+                    author: "A Channel",
+                    tabId: 1,
+                    startedAt: start + 2_000,
+                    open: false,
+                    events: [
+                        RawEvent(seq: 1, type: .mediaFound, t: start + 2_000, pos: 0),
+                        RawEvent(seq: 2, type: .play, t: start + 2_000, pos: 0),
+                        RawEvent(seq: 3, type: .viewEnded, t: start + 62_000, pos: 60, reason: "nav"),
+                    ]
+                ),
+            ]
+        )
+
+        _ = try store.record(flush, serverTime: start)
+
+        let records = try store.viewRecords()
+        #expect(records.count == 1)
+        #expect(records.first?.viewId == "real")
+    }
 }

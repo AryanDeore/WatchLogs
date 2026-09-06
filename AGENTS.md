@@ -14,7 +14,18 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
 
 ### Extension versioning
 
-If you modify any file under `extension/`, increment `extension/manifest.json` `version`.
+After any change under `extension/`, bump the extension version before commit.
+
+- Update the version in `extension/manifest.json` (and any matching package metadata if needed).
+- Patch bump for normal changes: `0.1.0` → `0.1.1`.
+
+### App versioning
+
+After any change under `app/`, bump the app version before commit.
+
+- Update the version string in app sources where exposed to users/API (`WatchLogsApp.swift`, `AppDelegate.swift`, `SettingsView.swift`, and related tests if needed).
+- Patch bump for normal changes: `0.1.0` → `0.1.1`.
+
 
 ## How to explain things to me
 
