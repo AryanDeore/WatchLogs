@@ -1,124 +1,150 @@
-// Day boundary diagnostics for the 2026-09-06 race condition incident.
-// This analyzes the database to show what happened at the critical moment
-// and verifies that the fix would have prevented the issue.
+// Day boundary diagnostics — generic analyzer.
+//
+// Given a date and target hour, this inspects the DB around that boundary and
+// explains what likely happened: when the first post-target flush arrived,
+// whether there were watched segments crossing the target, what got frozen, and
+// when the day would be expected to end if activity was near the boundary.
 
-const TARGET_HOUR_MS = 1788681600000; // Sept 6, 04:00:00
-const FIRST_FLUSH_MS = 1788681631618; // Sept 6, 04:00:31 (when race happened)
-const LATE_FLUSH_MS = 1788681636621; // Sept 6, 04:00:36 (crossing segment flush)
-const BOUNDARY_WINDOW_MS = 90 * 60 * 1000; // 90 minutes
+const DEFAULT_TARGET_HOUR = 4;
+const DEFAULT_WINDOW_MINUTES = 90;
 
-export function analyzeDayBoundary(db) {
-  const analysis = {
-    incident: getIncidentSummary(db),
-    timeline: getTimeline(db),
-    segments: getSegmentsAtCriticalMoment(db),
-    crossingSegment: getCrossingSegment(db),
-    newestActivity: getNewestActivity(db),
-    fixAnalysis: analyzeHowFixWorks(db),
-    actualResult: getActualFrozenDay(db),
-    expectedResult: getExpectedResult(db),
-  };
+export function analyzeDayBoundary(db, options = {}) {
+  const date = parseIsoDate(options.date) ?? localIsoDate(new Date());
+  const targetHour = parseHour(options.targetHour) ?? DEFAULT_TARGET_HOUR;
+  const boundaryWindowMs = (parseInt(options.windowMinutes ?? DEFAULT_WINDOW_MINUTES, 10) || DEFAULT_WINDOW_MINUTES) * 60 * 1000;
 
-  return analysis;
-}
+  const targetMs = localDateAtHourMs(date, targetHour);
+  const previousLogicalDate = shiftIsoDate(date, -1);
 
-function getIncidentSummary(db) {
+  const firstFlush = firstFlushAtOrAfter(db, targetMs);
+  const crossing = crossingSegmentAtTarget(db, targetMs);
+  const crossingFirstFlush = crossing ? firstFlushForView(db, crossing.view_id) : null;
+
   return {
-    date: '2026-09-06',
-    targetHour: formatTimestamp(TARGET_HOUR_MS),
-    firstFlush: formatTimestamp(FIRST_FLUSH_MS),
-    lateFlush: formatTimestamp(LATE_FLUSH_MS),
-    description: 'Day boundary froze at 04:00:00 instead of sliding to 06:12:03',
+    config: {
+      date,
+      targetHour,
+      boundaryWindowMinutes: Math.round(boundaryWindowMs / 60000),
+      target: formatTimestamp(targetMs),
+      targetMs,
+      logicalDateExpected: previousLogicalDate,
+    },
+    summary: summarize(firstFlush, crossingFirstFlush),
+    timeline: buildTimeline(db, { targetMs, firstFlush, crossing, crossingFirstFlush }),
+    crossingSegment: crossing
+      ? {
+          viewId: crossing.view_id,
+          start: formatTimestamp(crossing.wall_start_ms),
+          end: formatTimestamp(crossing.wall_end_ms),
+          firstFlush: crossingFirstFlush ? formatTimestamp(crossingFirstFlush.received_at_ms) : null,
+          arrivedBeforeFirstPostTargetFlush:
+            !!firstFlush && !!crossingFirstFlush && crossingFirstFlush.received_at_ms <= firstFlush.received_at_ms,
+        }
+      : null,
+    newestActivity: newestActivityBefore(db, firstFlush?.received_at_ms ?? targetMs + 2 * 60_000, targetMs, boundaryWindowMs),
+    fixAnalysis: analyzeFixBehavior(db, targetMs, boundaryWindowMs),
+    actualResult: actualFrozenDay(db, previousLogicalDate),
+    expectedResult: expectedBoundary(db, targetMs, boundaryWindowMs),
+    segmentsAtCriticalMoment: watchedSegmentsNear(db, targetMs, firstFlush?.received_at_ms ?? targetMs + 2 * 60_000, boundaryWindowMs),
   };
 }
 
-function getTimeline(db) {
-  const events = [];
+function summarize(firstFlush, crossingFirstFlush) {
+  if (!firstFlush) return 'No flush was found at or after the target hour.';
+  if (!crossingFirstFlush) {
+    return 'A post-target flush exists, but no crossing segment flush was found for this window.';
+  }
+  if (crossingFirstFlush.received_at_ms > firstFlush.received_at_ms) {
+    return 'Possible race: boundary-triggering flush arrived before the crossing-segment flush.';
+  }
+  return 'No race signal from flush ordering: crossing-segment flush arrived before or with the first post-target flush.';
+}
 
-  // Key activity moments
-  const crossingSegQuery = db.prepare(`
-    SELECT wall_start_ms, wall_end_ms
-    FROM segments
-    WHERE kind = 'watched'
-      AND wall_start_ms < ?
-      AND wall_end_ms > ?
-    LIMIT 1
-  `);
-  const crossing = crossingSegQuery.get(TARGET_HOUR_MS, TARGET_HOUR_MS);
+function buildTimeline(db, { targetMs, firstFlush, crossing, crossingFirstFlush }) {
+  const events = [
+    { timestamp: targetMs, time: formatTimestamp(targetMs), event: 'Target hour boundary' },
+  ];
 
   if (crossing) {
     events.push({
-      time: formatTimestamp(crossing.wall_start_ms),
       timestamp: crossing.wall_start_ms,
-      event: 'Activity starts (crosses 4 AM boundary)',
-      type: 'activity',
+      time: formatTimestamp(crossing.wall_start_ms),
+      event: 'Watched segment starts (crosses boundary)',
     });
     events.push({
-      time: formatTimestamp(crossing.wall_end_ms),
       timestamp: crossing.wall_end_ms,
-      event: 'Activity ends',
-      type: 'activity',
+      time: formatTimestamp(crossing.wall_end_ms),
+      event: 'Watched segment ends',
     });
   }
 
-  // Flushes around the critical time
-  const flushQuery = db.prepare(`
-    SELECT received_at_ms, flush_id
-    FROM flushes
-    WHERE received_at_ms >= ?
-      AND received_at_ms <= ?
-    ORDER BY received_at_ms
-    LIMIT 20
-  `);
-  const flushes = flushQuery.all(TARGET_HOUR_MS - 60000, TARGET_HOUR_MS + 120000);
-
-  flushes.forEach((flush) => {
-    let description = 'Flush arrives';
-    if (flush.received_at_ms === FIRST_FLUSH_MS) {
-      description = '⚠️ Flush triggers boundary check (race condition moment)';
-    } else if (flush.received_at_ms === LATE_FLUSH_MS) {
-      description = 'Crossing segment flush arrives';
-    }
+  if (firstFlush) {
     events.push({
-      time: formatTimestamp(flush.received_at_ms),
+      timestamp: firstFlush.received_at_ms,
+      time: formatTimestamp(firstFlush.received_at_ms),
+      event: 'First flush at/after target (boundary check candidate)',
+      flushId: firstFlush.flush_id,
+    });
+  }
+
+  if (crossingFirstFlush) {
+    events.push({
+      timestamp: crossingFirstFlush.received_at_ms,
+      time: formatTimestamp(crossingFirstFlush.received_at_ms),
+      event: 'First flush mentioning the crossing view',
+      flushId: crossingFirstFlush.flush_id,
+    });
+  }
+
+  const around = db
+    .prepare(
+      `
+      SELECT received_at_ms, flush_id
+      FROM flushes
+      WHERE received_at_ms >= ? AND received_at_ms <= ?
+      ORDER BY received_at_ms
+      LIMIT 30
+    `
+    )
+    .all(targetMs - 60_000, targetMs + 180_000);
+
+  for (const flush of around) {
+    events.push({
       timestamp: flush.received_at_ms,
-      event: description,
-      type: 'flush',
+      time: formatTimestamp(flush.received_at_ms),
+      event: 'Flush arrives',
       flushId: flush.flush_id,
     });
-  });
+  }
 
-  return events.sort((a, b) => a.timestamp - b.timestamp);
+  const seen = new Set();
+  return events
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .filter((e) => {
+      const key = `${e.timestamp}:${e.event}:${e.flushId ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
-function getSegmentsAtCriticalMoment(db) {
-  const query = db.prepare(`
-    SELECT 
-      wall_start_ms,
-      wall_end_ms,
-      view_id,
-      CASE 
-        WHEN wall_start_ms < ? AND wall_end_ms > ?
-        THEN 1
-        ELSE 0
-      END as crosses_boundary
-    FROM segments
-    WHERE kind = 'watched'
-      AND wall_end_ms > ? - ?
-      AND wall_end_ms < ?
-    ORDER BY wall_start_ms DESC
-    LIMIT 30
-  `);
+function watchedSegmentsNear(db, targetMs, beforeMs, windowMs) {
+  const rows = db
+    .prepare(
+      `
+      SELECT wall_start_ms, wall_end_ms, view_id,
+             CASE WHEN wall_start_ms < ? AND wall_end_ms > ? THEN 1 ELSE 0 END AS crosses_boundary
+      FROM segments
+      WHERE kind = 'watched'
+        AND wall_end_ms > ? - ?
+        AND wall_end_ms < ?
+      ORDER BY wall_start_ms DESC
+      LIMIT 30
+    `
+    )
+    .all(targetMs, targetMs, targetMs, windowMs, beforeMs);
 
-  const segments = query.all(
-    TARGET_HOUR_MS,
-    TARGET_HOUR_MS,
-    TARGET_HOUR_MS,
-    BOUNDARY_WINDOW_MS,
-    FIRST_FLUSH_MS
-  );
-
-  return segments.map((seg) => ({
+  return rows.map((seg) => ({
     start: formatTimestamp(seg.wall_start_ms),
     end: formatTimestamp(seg.wall_end_ms),
     viewId: seg.view_id,
@@ -126,144 +152,156 @@ function getSegmentsAtCriticalMoment(db) {
   }));
 }
 
-function getCrossingSegment(db) {
-  const query = db.prepare(`
-    SELECT 
-      wall_start_ms,
-      wall_end_ms,
-      view_id
-    FROM segments
-    WHERE kind = 'watched'
-      AND wall_start_ms < ?
-      AND wall_end_ms > ?
-    LIMIT 1
-  `);
-
-  const seg = query.get(TARGET_HOUR_MS, TARGET_HOUR_MS);
-  if (!seg) return null;
-
-  // Check when this view's flushes arrived
-  const flushQuery = db.prepare(`
-    SELECT received_at_ms, flush_id
-    FROM flushes
-    WHERE ack_json LIKE ?
-    ORDER BY received_at_ms
-    LIMIT 5
-  `);
-
-  const flushes = flushQuery.all(`%${seg.view_id}%`);
-
-  return {
-    start: formatTimestamp(seg.wall_start_ms),
-    end: formatTimestamp(seg.wall_end_ms),
-    viewId: seg.view_id,
-    existedAtCriticalMoment: seg.wall_end_ms < FIRST_FLUSH_MS,
-    flushes: flushes.map((f) => ({
-      time: formatTimestamp(f.received_at_ms),
-      timestamp: f.received_at_ms,
-      flushId: f.flush_id,
-      beforeCriticalMoment: f.received_at_ms < FIRST_FLUSH_MS,
-    })),
-  };
+function crossingSegmentAtTarget(db, targetMs) {
+  return (
+    db
+      .prepare(
+        `
+      SELECT wall_start_ms, wall_end_ms, view_id
+      FROM segments
+      WHERE kind = 'watched'
+        AND wall_start_ms < ?
+        AND wall_end_ms > ?
+      ORDER BY wall_start_ms DESC
+      LIMIT 1
+    `
+      )
+      .get(targetMs, targetMs) ?? null
+  );
 }
 
-function getNewestActivity(db) {
-  const query = db.prepare(`
-    SELECT MAX(wall_end_ms) as newest_ms
-    FROM segments
-    WHERE wall_end_ms < ?
-  `);
+function firstFlushAtOrAfter(db, targetMs) {
+  return (
+    db
+      .prepare('SELECT received_at_ms, flush_id FROM flushes WHERE received_at_ms >= ? ORDER BY received_at_ms LIMIT 1')
+      .get(targetMs) ?? null
+  );
+}
 
-  const result = query.get(FIRST_FLUSH_MS);
-  if (!result || !result.newest_ms) return null;
+function firstFlushForView(db, viewId) {
+  return (
+    db
+      .prepare(
+        `
+      SELECT received_at_ms, flush_id
+      FROM flushes
+      WHERE ack_json LIKE ?
+      ORDER BY received_at_ms
+      LIMIT 1
+    `
+      )
+      .get(`%${viewId}%`) ?? null
+  );
+}
 
-  const diffFromTarget = result.newest_ms - TARGET_HOUR_MS;
-  const minutesFromTarget = diffFromTarget / 60000;
+function newestActivityBefore(db, beforeMs, targetMs, windowMs) {
+  const result =
+    db
+      .prepare('SELECT MAX(wall_end_ms) AS newest_ms FROM segments WHERE wall_end_ms < ?')
+      .get(beforeMs) ?? null;
+  if (!result?.newest_ms) return null;
 
+  const diffFromTarget = result.newest_ms - targetMs;
   return {
     timestamp: formatTimestamp(result.newest_ms),
     timestampMs: result.newest_ms,
-    minutesFromTarget: Math.round(minutesFromTarget * 10) / 10,
-    withinBoundaryWindow: Math.abs(diffFromTarget) < BOUNDARY_WINDOW_MS,
+    minutesFromTarget: Math.round((diffFromTarget / 60000) * 10) / 10,
+    withinBoundaryWindow: Math.abs(diffFromTarget) < windowMs,
   };
 }
 
-function analyzeHowFixWorks(db) {
-  const newest = getNewestActivity(db);
+function analyzeFixBehavior(db, targetMs, windowMs) {
+  const newest = newestActivityBefore(db, targetMs + 2 * 60_000, targetMs, windowMs);
   if (!newest) return null;
-
+  const waitUntil = targetMs + windowMs;
   const withinWindow = newest.withinBoundaryWindow;
-  const waitUntil = TARGET_HOUR_MS + BOUNDARY_WINDOW_MS; // 05:30:00
-
   return {
     activityWithinWindow: withinWindow,
     newestActivity: newest.timestamp,
-    targetHour: formatTimestamp(TARGET_HOUR_MS),
+    targetHour: formatTimestamp(targetMs),
     windowEnd: formatTimestamp(waitUntil),
     fixBehavior: withinWindow
-      ? `✅ Fix detects activity near boundary, waits until ${formatTimestamp(waitUntil)}`
-      : 'Activity not near boundary, would freeze normally',
+      ? `Activity near boundary: wait until ${formatTimestamp(waitUntil)} before freezing.`
+      : 'No near-boundary activity: freeze can proceed at normal boundary checks.',
     prevented: withinWindow,
   };
 }
 
-function getActualFrozenDay(db) {
-  const query = db.prepare(`
-    SELECT 
-      logical_date,
-      day_start_ms,
-      day_end_ms
-    FROM rolled_day
-    WHERE logical_date = '2026-09-05'
-  `);
-
-  const day = query.get();
+function actualFrozenDay(db, logicalDate) {
+  const day =
+    db
+      .prepare(
+        `
+      SELECT logical_date, day_start_ms, day_end_ms
+      FROM rolled_day
+      WHERE logical_date = ?
+    `
+      )
+      .get(logicalDate) ?? null;
   if (!day) return null;
-
-  const durationHours = (day.day_end_ms - day.day_start_ms) / (1000 * 3600);
 
   return {
     date: day.logical_date,
     start: formatTimestamp(day.day_start_ms),
     end: formatTimestamp(day.day_end_ms),
-    durationHours: Math.round(durationHours * 10) / 10,
-    frozeAtTarget: day.day_end_ms === TARGET_HOUR_MS,
+    durationHours: Math.round(((day.day_end_ms - day.day_start_ms) / 3600000) * 10) / 10,
   };
 }
 
-function getExpectedResult(db) {
-  // Find the last activity in the day
-  const query = db.prepare(`
-    SELECT MAX(wall_end_ms) as last_activity_ms
-    FROM segments
-    WHERE kind = 'watched'
-      AND wall_start_ms >= ? - 86400000
-      AND wall_start_ms < ? + 21600000
-  `);
+function expectedBoundary(db, targetMs, windowMs) {
+  const result =
+    db
+      .prepare(
+        `
+      SELECT MAX(wall_end_ms) AS last_activity_ms
+      FROM segments
+      WHERE kind = 'watched'
+        AND wall_start_ms >= ? - 86400000
+        AND wall_start_ms < ? + 21600000
+    `
+      )
+      .get(targetMs, targetMs) ?? null;
 
-  const result = query.get(TARGET_HOUR_MS, TARGET_HOUR_MS);
-  if (!result || !result.last_activity_ms) return null;
-
-  const shouldEnd = result.last_activity_ms + BOUNDARY_WINDOW_MS;
-
+  if (!result?.last_activity_ms) return null;
+  const shouldEnd = result.last_activity_ms + windowMs;
   return {
     lastActivity: formatTimestamp(result.last_activity_ms),
     shouldEndAt: formatTimestamp(shouldEnd),
-    slidMinutes: 90,
+    slidMinutes: Math.round(windowMs / 60000),
   };
+}
+
+function parseIsoDate(text) {
+  if (!text || typeof text !== 'string') return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  return text;
+}
+
+function parseHour(value) {
+  const n = parseInt(value, 10);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : null;
+}
+
+function localDateAtHourMs(isoDate, hour) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(y, m - 1, d, hour, 0, 0, 0).getTime();
+}
+
+function localIsoDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function shiftIsoDate(isoDate, days) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  const date = new Date(y, m - 1, d, 12, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return localIsoDate(date);
 }
 
 function formatTimestamp(ms) {
   if (!ms) return null;
-  const date = new Date(ms);
-  return date.toLocaleString('en-US', {
-    timeZone: 'America/Los_Angeles', // Adjust to your timezone
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
+  return new Date(ms).toLocaleString();
 }

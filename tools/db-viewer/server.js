@@ -158,7 +158,8 @@ const MIME = {
 };
 
 function serveStatic(req, res) {
-  const reqPath = req.url === '/' ? '/index.html' : req.url;
+  const pathname = new URL(req.url, `http://localhost:${port}`).pathname;
+  const reqPath = pathname === '/' ? '/index.html' : pathname;
   const filePath = path.join(PUBLIC_DIR, path.normalize(reqPath).replace(/^(\.\.[/\\])+/, ''));
   fs.readFile(filePath, (err, data) => {
     if (err) {
@@ -203,7 +204,11 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 200, { available: replayBinary() !== null });
     }
     if (url.pathname === '/api/day-boundary') {
-      return sendJson(res, 200, analyzeDayBoundary(db));
+      return sendJson(res, 200, analyzeDayBoundary(db, {
+        date: url.searchParams.get('date'),
+        targetHour: url.searchParams.get('targetHour'),
+        windowMinutes: url.searchParams.get('windowMinutes'),
+      }));
     }
     const columnsMatch = /^\/api\/tables\/([^/]+)\/columns$/.exec(url.pathname);
     if (columnsMatch) {

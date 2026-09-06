@@ -1026,6 +1026,10 @@ public final class EventStore: @unchecked Sendable {
     /// recent Views", which is what you want when something just went wrong and
     /// you do not yet know its name.
     ///
+    /// Generic fallback rows that never produced watched Segments are left out.
+    /// They are capture noise (for example a page-level autoplay blip on a site
+    /// with no Adapter), useful in raw tables but not in a human-facing picker.
+    ///
     /// Every word in the query has to appear somewhere in the View's id, video
     /// id, title or author — order does not matter, and punctuation-only words
     /// are dropped. That last part is not fussiness: a title reading
@@ -1061,6 +1065,13 @@ public final class EventStore: @unchecked Sendable {
                    previous_view_id
             FROM views
             WHERE \(clause)
+              AND NOT (
+                adapter_id IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM segments s
+                  WHERE s.view_id = views.view_id AND s.kind = 'watched'
+                )
+              )
             ORDER BY started_at_ms DESC
             LIMIT ?
             """,

@@ -67,6 +67,7 @@ async function refreshTableList() {
 async function loadTable(name) {
   hideLint();
   hideReplay();
+  hideDayBoundary();
   state.currentTable = name;
   state.page = 0;
   state.filters = {};
@@ -397,6 +398,7 @@ function escapeHtml(text) {
 
 async function showLint() {
   hideReplay();
+  hideDayBoundary();
   state.showingLint = true;
   state.currentTable = null;
   el('table-title').textContent = 'Lint — what the data must never say';
@@ -432,6 +434,7 @@ function hideLint() {
 const replay = { query: '', views: [], selected: null };
 
 async function showReplay(viewId = null) {
+  hideDayBoundary();
   state.showingReplay = true;
   state.showingLint = false;
   state.currentTable = null;
@@ -667,11 +670,17 @@ function hideReplay() {
 
 // --- Day Boundary Diagnostics ----------------------------------------------
 
+const dayBoundaryState = {
+  date: new Date().toISOString().slice(0, 10),
+  targetHour: 4,
+  windowMinutes: 90,
+};
+
 async function showDayBoundary() {
   hideLint();
   hideReplay();
-  hideDayBoundary(); // Clear any previous state
-  
+  hideDayBoundary();
+
   state.currentTable = null;
   el('table-title').textContent = '📅 Day Boundary Diagnostics';
   el('global-filter').disabled = true;
@@ -680,16 +689,33 @@ async function showDayBoundary() {
   el('pager').style.display = 'none';
   el('day-boundary-panel').hidden = false;
   el('day-boundary-item').classList.add('active');
-  
-  el('day-boundary-panel').innerHTML = '<p class="replay-loading">…</p>';
-  
+
+  await refreshDayBoundary();
+}
+
+async function refreshDayBoundary() {
+  renderDayBoundaryLoading();
+  const params = new URLSearchParams({
+    date: dayBoundaryState.date,
+    targetHour: String(dayBoundaryState.targetHour),
+    windowMinutes: String(dayBoundaryState.windowMinutes),
+  });
+
   try {
-    const data = await fetchJson('/api/day-boundary');
+    const data = await fetchJson(`/api/day-boundary?${params}`);
     renderDayBoundary(data);
     setStatus(true);
   } catch (err) {
     el('day-boundary-panel').innerHTML = `<p class="replay-error">${escapeHtml(err.message)}</p>`;
   }
+}
+
+function renderDayBoundaryLoading() {
+  el('day-boundary-panel').innerHTML =
+    `<div class="day-boundary-content">` +
+    dayBoundaryControlsHtml() +
+    '<p class="replay-loading">Analyzing…</p></div>';
+  wireDayBoundaryControls();
 }
 
 function hideDayBoundary() {
@@ -700,133 +726,131 @@ function hideDayBoundary() {
 }
 
 function renderDayBoundary(data) {
-  const { incident, timeline, segments, crossingSegment, newestActivity, fixAnalysis, actualResult, expectedResult } = data;
-  
+  const {
+    config,
+    summary,
+    timeline,
+    crossingSegment,
+    newestActivity,
+    fixAnalysis,
+    actualResult,
+    expectedResult,
+    segmentsAtCriticalMoment,
+  } = data;
+
   let html = '<div class="day-boundary-content">';
-  
-  // Incident Summary
+  html += dayBoundaryControlsHtml();
+
   html += '<section class="replay-section">';
-  html += '<h2>2026-09-06 Day Boundary Incident</h2>';
-  html += `<p>${escapeHtml(incident.description)}</p>`;
+  html += '<h2>Boundary analysis</h2>';
+  html += `<p>${escapeHtml(summary)}</p>`;
   html += '<table class="replay-table"><tbody>';
-  html += `<tr><td>Date</td><td>${escapeHtml(incident.date)}</td></tr>`;
-  html += `<tr><td>Target Hour</td><td class="mono">${escapeHtml(incident.targetHour)}</td></tr>`;
-  html += `<tr><td>Critical Flush</td><td class="mono">${escapeHtml(incident.firstFlush)}</td></tr>`;
-  html += `<tr><td>Late Flush</td><td class="mono">${escapeHtml(incident.lateFlush)}</td></tr>`;
+  html += `<tr><td>Date</td><td class="mono">${escapeHtml(config.date)}</td></tr>`;
+  html += `<tr><td>Target hour</td><td class="mono">${escapeHtml(config.target)}</td></tr>`;
+  html += `<tr><td>Boundary window</td><td>${config.boundaryWindowMinutes} min</td></tr>`;
+  html += `<tr><td>Expected logical date</td><td class="mono">${escapeHtml(config.logicalDateExpected)}</td></tr>`;
   html += '</tbody></table>';
   html += '</section>';
-  
-  // Timeline
+
   html += '<section class="replay-section">';
   html += '<h3>Timeline</h3>';
   html += '<table class="replay-table"><thead><tr><th>Time</th><th>Event</th></tr></thead><tbody>';
-  timeline.forEach(event => {
-    const rowClass = event.event.includes('⚠') ? ' class="warn-row"' : '';
+  for (const event of timeline) {
+    const rowClass = event.event.toLowerCase().includes('race') ? ' class="warn-row"' : '';
     html += `<tr${rowClass}><td class="mono">${escapeHtml(event.time)}</td><td>${escapeHtml(event.event)}</td></tr>`;
-  });
-  html += '</tbody></table>';
-  html += '</section>';
-  
-  // Crossing Segment Analysis
+  }
+  html += '</tbody></table></section>';
+
   if (crossingSegment) {
     html += '<section class="replay-section">';
-    html += '<h3>Crossing Segment Analysis</h3>';
-    html += '<table class="replay-table"><tbody>';
+    html += '<h3>Crossing segment</h3><table class="replay-table"><tbody>';
+    html += `<tr><td>View</td><td class="mono">${escapeHtml(crossingSegment.viewId)}</td></tr>`;
     html += `<tr><td>Start</td><td class="mono">${escapeHtml(crossingSegment.start)}</td></tr>`;
     html += `<tr><td>End</td><td class="mono">${escapeHtml(crossingSegment.end)}</td></tr>`;
-    html += `<tr><td>View ID</td><td class="mono">${escapeHtml(crossingSegment.viewId)}</td></tr>`;
-    html += `<tr><td>In DB at 04:00:31?</td><td><strong>${crossingSegment.existedAtCriticalMoment ? '✅ YES' : '❌ NO'}</strong></td></tr>`;
-    html += '</tbody></table>';
-    
-    html += '<h4>Flushes for this view:</h4>';
-    html += '<table class="replay-table"><thead><tr><th>Time</th><th>Before Critical Moment?</th></tr></thead><tbody>';
-    crossingSegment.flushes.forEach(flush => {
-      html += `<tr><td class="mono">${escapeHtml(flush.time)}</td><td>${flush.beforeCriticalMoment ? '✅ Yes' : 'No'}</td></tr>`;
-    });
-    html += '</tbody></table>';
-    html += '</section>';
+    html += `<tr><td>First flush for this view</td><td class="mono">${escapeHtml(crossingSegment.firstFlush ?? '—')}</td></tr>`;
+    html += `<tr><td>Arrived before first post-target flush?</td><td>${crossingSegment.arrivedBeforeFirstPostTargetFlush ? '✅ Yes' : '❌ No'}</td></tr>`;
+    html += '</tbody></table></section>';
   }
-  
-  // Newest Activity
+
   if (newestActivity) {
     html += '<section class="replay-section">';
-    html += '<h3>Newest Activity at Critical Moment</h3>';
-    html += '<table class="replay-table"><tbody>';
-    html += `<tr><td>Newest activity</td><td class="mono">${escapeHtml(newestActivity.timestamp)}</td></tr>`;
-    html += `<tr><td>Minutes from target</td><td class="mono">${newestActivity.minutesFromTarget} min</td></tr>`;
-    html += `<tr><td>Within boundary window?</td><td><strong>${newestActivity.withinBoundaryWindow ? '✅ YES' : '❌ NO'}</strong></td></tr>`;
-    html += '</tbody></table>';
-    html += '</section>';
+    html += '<h3>Newest activity before critical flush</h3><table class="replay-table"><tbody>';
+    html += `<tr><td>Timestamp</td><td class="mono">${escapeHtml(newestActivity.timestamp)}</td></tr>`;
+    html += `<tr><td>Minutes from target</td><td>${newestActivity.minutesFromTarget}</td></tr>`;
+    html += `<tr><td>Within boundary window?</td><td>${newestActivity.withinBoundaryWindow ? '✅ Yes' : 'No'}</td></tr>`;
+    html += '</tbody></table></section>';
   }
-  
-  // Fix Analysis
+
   if (fixAnalysis) {
-    html += '<section class="replay-section" style="background: #f0f9ff; padding: 1rem; border-left: 4px solid #3b82f6;">';
-    html += '<h3>✅ How the Fix Works</h3>';
-    html += '<table class="replay-table"><tbody>';
-    html += `<tr><td>Activity within window?</td><td><strong>${fixAnalysis.activityWithinWindow ? '✅ YES' : 'NO'}</strong></td></tr>`;
-    html += `<tr><td>Newest activity</td><td class="mono">${escapeHtml(fixAnalysis.newestActivity)}</td></tr>`;
-    html += `<tr><td>Target hour</td><td class="mono">${escapeHtml(fixAnalysis.targetHour)}</td></tr>`;
+    html += '<section class="replay-section">';
+    html += '<h3>Fix behavior</h3><table class="replay-table"><tbody>';
+    html += `<tr><td>Activity within window?</td><td>${fixAnalysis.activityWithinWindow ? '✅ Yes' : 'No'}</td></tr>`;
     html += `<tr><td>Wait until</td><td class="mono">${escapeHtml(fixAnalysis.windowEnd)}</td></tr>`;
     html += '</tbody></table>';
-    html += `<p style="margin-top: 1rem; font-weight: 600;">${escapeHtml(fixAnalysis.fixBehavior)}</p>`;
-    if (fixAnalysis.prevented) {
-      html += '<p style="color: #16a34a; font-weight: 600; margin-top: 0.5rem;">✅ This fix would have prevented the premature freeze</p>';
-    }
+    html += `<p>${escapeHtml(fixAnalysis.fixBehavior)}</p>`;
     html += '</section>';
   }
-  
-  // Results Comparison
-  html += '<section class="replay-section">';
-  html += '<h3>Results Comparison</h3>';
-  html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">';
-  
-  if (actualResult) {
-    html += '<div>';
-    html += '<h4 style="color: #dc2626;">❌ Actual (with bug)</h4>';
-    html += '<table class="replay-table"><tbody>';
-    html += `<tr><td>Day</td><td class="mono">${escapeHtml(actualResult.date)}</td></tr>`;
-    html += `<tr><td>Start</td><td class="mono">${escapeHtml(actualResult.start)}</td></tr>`;
-    html += `<tr><td>End</td><td class="mono"><strong style="color: #dc2626;">${escapeHtml(actualResult.end)}</strong></td></tr>`;
-    html += `<tr><td>Duration</td><td>${actualResult.durationHours} hours</td></tr>`;
-    html += '</tbody></table>';
-    html += '</div>';
-  }
-  
-  if (expectedResult) {
-    html += '<div>';
-    html += '<h4 style="color: #16a34a;">✅ Expected (with fix)</h4>';
-    html += '<table class="replay-table"><tbody>';
-    html += `<tr><td>Last activity</td><td class="mono">${escapeHtml(expectedResult.lastActivity)}</td></tr>`;
-    html += `<tr><td>Should end</td><td class="mono"><strong style="color: #16a34a;">${escapeHtml(expectedResult.shouldEndAt)}</strong></td></tr>`;
-    html += `<tr><td>Slide</td><td>+${expectedResult.slidMinutes} minutes</td></tr>`;
-    html += '</tbody></table>';
-    html += '</div>';
-  }
-  
+
+  html += '<section class="replay-section"><h3>Actual vs expected</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">';
+  html += '<div><h4>Actual frozen day</h4>';
+  html += actualResult
+    ? `<table class="replay-table"><tbody>
+        <tr><td>Date</td><td class="mono">${escapeHtml(actualResult.date)}</td></tr>
+        <tr><td>Start</td><td class="mono">${escapeHtml(actualResult.start)}</td></tr>
+        <tr><td>End</td><td class="mono">${escapeHtml(actualResult.end)}</td></tr>
+      </tbody></table>`
+    : '<p class="dim">No rolled_day row found for that logical date.</p>';
   html += '</div>';
-  html += '</section>';
-  
-  // Segments List
-  if (segments && segments.length > 0) {
-    html += '<section class="replay-section">';
-    html += '<h3>Segments at Critical Moment (04:00:31)</h3>';
-    html += `<p class="dim">${segments.length} segments in database before the critical flush</p>`;
-    html += '<table class="replay-table"><thead><tr><th>Start</th><th>End</th><th>Crosses 4 AM?</th></tr></thead><tbody>';
-    segments.slice(0, 15).forEach(seg => {
-      const rowClass = seg.crossesBoundary ? ' class="warn-row"' : '';
-      html += `<tr${rowClass}><td class="mono">${escapeHtml(seg.start)}</td><td class="mono">${escapeHtml(seg.end)}</td><td>${seg.crossesBoundary ? '✅ YES' : ''}</td></tr>`;
-    });
-    if (segments.length > 15) {
-      html += `<tr><td colspan="3" class="dim">... and ${segments.length - 15} more</td></tr>`;
+  html += '<div><h4>Expected if activity slides boundary</h4>';
+  html += expectedResult
+    ? `<table class="replay-table"><tbody>
+        <tr><td>Last activity</td><td class="mono">${escapeHtml(expectedResult.lastActivity)}</td></tr>
+        <tr><td>Should end</td><td class="mono">${escapeHtml(expectedResult.shouldEndAt)}</td></tr>
+        <tr><td>Slide</td><td>+${expectedResult.slidMinutes} min</td></tr>
+      </tbody></table>`
+    : '<p class="dim">No watched activity found near this boundary.</p>';
+  html += '</div></div></section>';
+
+  if (segmentsAtCriticalMoment?.length) {
+    html += '<section class="replay-section"><h3>Watched segments before first post-target flush</h3>';
+    html += '<table class="replay-table"><thead><tr><th>Start</th><th>End</th><th>Crosses boundary?</th></tr></thead><tbody>';
+    for (const seg of segmentsAtCriticalMoment.slice(0, 20)) {
+      html += `<tr${seg.crossesBoundary ? ' class="warn-row"' : ''}><td class="mono">${escapeHtml(seg.start)}</td><td class="mono">${escapeHtml(seg.end)}</td><td>${seg.crossesBoundary ? '✅ Yes' : ''}</td></tr>`;
     }
-    html += '</tbody></table>';
-    html += '</section>';
+    html += '</tbody></table></section>';
   }
-  
+
   html += '</div>';
-  
   el('day-boundary-panel').innerHTML = html;
+  wireDayBoundaryControls();
+}
+
+function dayBoundaryControlsHtml() {
+  return (
+    '<section class="replay-section">' +
+    '<h3>Analyze boundary</h3>' +
+    '<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">' +
+    `<label>Date<br><input id="db-day-date" type="date" value="${escapeHtml(dayBoundaryState.date)}"></label>` +
+    `<label>Target hour<br><input id="db-day-hour" type="number" min="0" max="23" value="${dayBoundaryState.targetHour}" style="width:80px"></label>` +
+    `<label>Window min<br><input id="db-day-window" type="number" min="1" max="240" value="${dayBoundaryState.windowMinutes}" style="width:90px"></label>` +
+    '<button id="db-day-run">Run</button>' +
+    '</div></section>'
+  );
+}
+
+function wireDayBoundaryControls() {
+  const run = el('db-day-run');
+  if (!run) return;
+
+  run.onclick = () => {
+    const date = el('db-day-date').value;
+    const hour = Number(el('db-day-hour').value);
+    const windowMinutes = Number(el('db-day-window').value);
+    if (date) dayBoundaryState.date = date;
+    dayBoundaryState.targetHour = Number.isFinite(hour) ? Math.max(0, Math.min(23, hour)) : 4;
+    dayBoundaryState.windowMinutes = Number.isFinite(windowMinutes) ? Math.max(1, Math.min(240, windowMinutes)) : 90;
+    refreshDayBoundary().catch(showError);
+  };
 }
 
 // --- Polling ---------------------------------------------------------------
