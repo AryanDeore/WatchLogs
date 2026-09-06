@@ -94,6 +94,30 @@ A per-Service reader that knows how to extract a video's id and metadata from th
 Service's pages. WatchLogs ships Adapters for YouTube and Netflix; other Services fall
 back to generic extraction and are flagged in the App as needing an Adapter.
 
+## Debug Tools
+
+These are development tools that read the database but do not write to it. They answer
+questions no single layer can: where did a number come from, and could this state have
+physically happened.
+
+### wl-replay
+
+A Swift CLI tool that traces one View's complete journey through the pipeline: from the
+Extension's raw Events, through the App's Segment computation, to the History row that
+renders in the UI. Renders the same report in the terminal or as JSON (for the db-viewer's
+Replay tab). Calls the shipped SegmentComputer and read model, never a re-implementation,
+so stored-vs-recomputed comparison is meaningful: disagreement indicates the Segments were
+written by an older build, not that either is wrong. See `app/Sources/WLReplay/`.
+
+### wl-lint
+
+A Node CLI tool that runs invariant checks over the stored database — asking not whether
+each layer did what it meant to, but whether the *result* is something that could have
+physically happened. Eight checks: impossible tab overlaps, phantom Watched time where the
+video barely moved, Segments with duration mismatches, etc. Integrated into db-viewer's
+Lint tab with the same code, so the two always agree on what they are looking at. See
+`tools/lint/`.
+
 ## Terms this vocabulary avoids
 
 - **Session** — ambiguous (browser session vs viewing session). Use **View** for
