@@ -180,8 +180,26 @@ let recomputed = SegmentComputer.segments(
 /// implementation would be answering it twice.
 @MainActor
 func resolveHistory() throws -> (day: HistoryDay, row: HistoryVideo, members: [ViewRecord])? {
-    let startedAt = Date(timeIntervalSince1970: Double(view.startedAtMs) / 1000)
-    let days = try store.history(for: .custom(from: startedAt, through: startedAt), now: Date())
+    // `.custom` wants a Day's own label, not an arbitrary instant inside it —
+    // the read model clips its calendar-date arithmetic to the currently open
+    // Day's label, so a raw timestamp taken from after local midnight but
+    // before the Day has confirmed its (activity-flexed, ADR 0001) boundary
+    // computes a "day" later than the one that's actually still open, and gets
+    // clipped to nothing. Resolving to the Day's own start first — the open
+    // Day if the View is still inside it, otherwise whichever frozen Day's
+    // window contains it — is what every other caller of `.custom` already
+    // does; a View watched at 12:41 AM is exactly the case that goes missing
+    // without it.
+    let startedAtMs = view.startedAtMs
+    let dayStart: Date
+    if let openStart = try store.openDayStart(), startedAtMs >= Int(openStart.timeIntervalSince1970 * 1000) {
+        dayStart = openStart
+    } else if let frozen = try store.frozenDays().first(where: { startedAtMs >= $0.dayStartMs && startedAtMs < $0.dayEndMs }) {
+        dayStart = Date(timeIntervalSince1970: Double(frozen.dayStartMs) / 1000)
+    } else {
+        dayStart = Date(timeIntervalSince1970: Double(startedAtMs) / 1000)
+    }
+    let days = try store.history(for: .custom(from: dayStart, through: dayStart), now: Date())
     guard
         let day = days.first(where: { $0.videos.contains { $0.viewIds.contains(view.viewId) } }),
         let row = day.videos.first(where: { $0.viewIds.contains(view.viewId) })
