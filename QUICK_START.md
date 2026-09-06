@@ -1,6 +1,15 @@
 # 🚀 Quick Start: Verify the Day Boundary Fix
 
-## One Command to See Everything
+## Want to TEST it right now? (No waiting!)
+
+```bash
+node tools/simulate-boundary-crossing.js
+# Follow instructions - test completes in 20-30 minutes
+```
+
+See **TEST_IT_NOW.md** for full simulation guide.
+
+## Want to SEE the analysis?
 
 ```bash
 node tools/db-viewer/server.js
