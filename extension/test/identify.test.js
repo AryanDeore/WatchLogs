@@ -87,9 +87,9 @@ test("a cross-origin frame whose ancestor is unreadable is treated as embedded",
   assert.equal(isEmbedded({ isTopFrame: false, frameUrl: "https://www.youtube.com/embed/x" }), true);
 });
 
-test("contentFormat is a best guess: live when the media has no finite duration", () => {
+test("generic fallback always reports standard contentFormat", () => {
   assert.equal(contentFormatFor(213), "standard");
-  assert.equal(contentFormatFor(Infinity), "live");
+  assert.equal(contentFormatFor(Infinity), "standard");
   assert.equal(contentFormatFor(NaN), "standard");
   assert.equal(contentFormatFor(null), "standard");
 });
@@ -109,8 +109,8 @@ test("parseIsoDuration reads YouTube's PT#H#M#S duration markup to seconds", () 
   assert.equal(parseIsoDuration("PT45S"), 45);
   assert.equal(parseIsoDuration("PT1H2M3S"), 3723);
   assert.equal(parseIsoDuration("PT2H"), 7200);
-  // The parser is dumb on purpose: live's nonsense placeholder parses fine, and
-  // it is the YouTube Adapter — not this — that refuses to report it.
+  // The parser is dumb on purpose: nonsense placeholders parse fine, and it is
+  // the YouTube Adapter — not this — that refuses to report them as length.
   assert.equal(parseIsoDuration("PT2026691M52S"), 2026691 * 60 + 52);
 });
 

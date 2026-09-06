@@ -152,9 +152,9 @@ function sameSite(a, b) {
   return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }
 
-/** `live` when the media has no finite length; `standard` otherwise. */
-export function contentFormatFor(duration) {
-  return duration === Infinity ? "live" : "standard";
+/** Generic fallback has one format: `standard`. */
+export function contentFormatFor(_duration) {
+  return "standard";
 }
 
 /** The media's length, or null when the player has not said. */

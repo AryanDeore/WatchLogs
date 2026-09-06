@@ -160,9 +160,9 @@ test("the length falls from the Adapter to the player to mediaSession", () => {
 
 test("the format falls back to `standard` when nobody says otherwise", () => {
   assert.equal(merge({}).contentFormat, "standard");
-  assert.equal(merge({ generic: { contentFormat: "live" } }).contentFormat, "live");
+  assert.equal(merge({ generic: { contentFormat: "standard" } }).contentFormat, "standard");
   assert.equal(
-    merge({ adapter: { contentFormat: "short", confidence: "high" }, generic: { contentFormat: "live" } }).contentFormat,
+    merge({ adapter: { contentFormat: "short", confidence: "high" }, generic: { contentFormat: "standard" } }).contentFormat,
     "short",
   );
 });

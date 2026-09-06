@@ -1185,11 +1185,7 @@ public final class EventStore: @unchecked Sendable {
     /// the App stays idempotent — and it is what replaces an open View's
     /// `provisional` tail.
     private func recomputeSegments(viewId: String) throws {
-        var isLive = false
-        try database.query("SELECT content_format FROM views WHERE view_id = ?", [.text(viewId)]) { row in
-            isLive = row.text(0) == "live"
-        }
-        let segments = SegmentComputer.segments(viewId: viewId, events: try loadEvents(viewId: viewId), isLive: isLive)
+        let segments = SegmentComputer.segments(viewId: viewId, events: try loadEvents(viewId: viewId))
         try database.run("DELETE FROM segments WHERE view_id = ?", [.text(viewId)])
         for segment in segments {
             try database.run(
@@ -1431,7 +1427,7 @@ public final class EventStore: @unchecked Sendable {
         }
         return groups.map { key, group -> HistoryVideo in
             let coverage: Double?
-            if group.contentFormat == "live" || group.durationSec == nil || group.durationSec! <= 0 {
+            if !Self.hasFixedLengthDuration(durationSec: group.durationSec) {
                 coverage = nil
             } else {
                 let duration = group.durationSec!
@@ -1478,12 +1474,16 @@ public final class EventStore: @unchecked Sendable {
     }
 
     /// A YouTube Short is a View whose page path is `/shorts/<id>`. The current
-    /// Adapter-less extension slice reports every non-live View as "standard", so
+    /// Adapter-less extension slice reports every non-Short View as "standard", so
     /// the "short" format is recovered from the URL at read time — the same
-    /// read-time mapping `ServiceDisplayBucket.from` uses for the service. A
-    /// stored "live" already carries its own format and is left untouched.
+    /// read-time mapping `ServiceDisplayBucket.from` uses for the service.
+    ///
+    /// Legacy `"live"` rows are normalised to `"standard"`: that label no longer
+    /// carries behaviour.
     static func readTimeContentFormat(stored: String, url: String) -> String {
-        stored == "standard" && url.contains("/shorts/") ? "short" : stored
+        let normalized = stored == "live" ? "standard" : stored
+        if normalized == "standard" && url.contains("/shorts/") { return "short" }
+        return normalized
     }
 
     /// A generic-fallback View is identified by hashing the page's own address
@@ -1504,6 +1504,17 @@ public final class EventStore: @unchecked Sendable {
     static func readTimeVideoId(stored: String, url: String) -> String {
         guard stored.hasPrefix("sha1:"), let recovered = youTubeVideoId(fromURL: url) else { return stored }
         return recovered
+    }
+
+    /// Whether a reported duration behaves like a real fixed video length.
+    ///
+    /// A sliding DVR window is finite in the schema but not a true video length:
+    /// values in that shape (for example 14h+ radio windows) would render a
+    /// meaningless coverage bar. WatchLogs treats only positive durations up to
+    /// 12 hours as fixed-length.
+    private static func hasFixedLengthDuration(durationSec: Double?) -> Bool {
+        guard let durationSec, durationSec > 0 else { return false }
+        return durationSec <= 12 * 60 * 60
     }
 
     /// The id a bound `YouTubeAdapter` would report for `url`, mirroring its own

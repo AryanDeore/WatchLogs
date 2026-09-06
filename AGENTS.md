@@ -12,6 +12,13 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### Extension versioning
+
+After any change under `extension/`, bump the extension version before commit.
+
+- Update the version in `extension/manifest.json` (and any matching package metadata if needed).
+- Patch bump for normal changes: `0.1.0` → `0.1.1`.
+
 ## How to explain things to me
 
 When walking me through a decision, a tradeoff, or how something works:

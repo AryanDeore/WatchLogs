@@ -80,8 +80,8 @@ no Adapter, the Service is its domain.
 
 ### contentFormat
 
-The kind of content and player within a Service: `short`, `standard`, or `live`. YouTube
-Shorts is `service = youtube`, `contentFormat = short` — not a separate Service.
+The kind of content/player shape within a Service: `short` or `standard`. YouTube Shorts
+is `service = youtube`, `contentFormat = short` — not a separate Service.
 
 ### embedded
 

@@ -168,8 +168,7 @@ let events = try store.rawEvents(viewId: view.viewId)
 let stored = try store.segments(viewId: view.viewId)
 let recomputed = SegmentComputer.segments(
     viewId: view.viewId,
-    events: events,
-    isLive: view.contentFormat == "live"
+    events: events
 )
 
 /// The History row this View ended up in, and every View folded into it.

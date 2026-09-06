@@ -134,16 +134,7 @@ private struct VideoRow: View {
                             Text("·")
                         }
                         Text(clockTime(video.lastWatchedAt))
-                        // Shorts and Videos are told apart by the row icon; only
-                        // "live" still earns a text badge.
-                        if video.contentFormat == "live" {
-                            Text(video.contentFormat)
-                                .font(.caption2)
-                                .padding(.horizontal, 4)
-                                .background(bucketColor(video.service).opacity(0.15))
-                                .foregroundStyle(bucketColor(video.service))
-                                .clipShape(Capsule())
-                        }
+                        // Shorts and standard videos are told apart by the row icon.
                         if video.embedded {
                             Text("embedded")
                                 .font(.caption2)
