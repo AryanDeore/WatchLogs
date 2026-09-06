@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>YouTube Shorts Simulator</title>
+    <style>
+      video {
+        width: 400px;
+        height: 600px;
+        display: block;
+        margin: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Simulates YouTube Shorts with 3 video elements for the same short -->
+    <video id="preload-prev" muted></video>
+    <video id="current" muted></video>
+    <video id="preload-next" muted></video>
+
+    <script type="module">
+      // Read src from URL params
+      const params = new URLSearchParams(location.search);
+      const src = params.get("src") || "/fixtures/short.webm";
+
+      // All 3 elements load the same video (simulating YouTube Shorts behavior)
+      const prev = document.getElementById("preload-prev");
+      const current = document.getElementById("current");
+      const next = document.getElementById("preload-next");
+
+      // Set sources - this will fire loadedmetadata on all 3 nearly simultaneously
+      prev.src = src;
+      current.src = src;
+      next.src = src;
+
+      // Make the current one actually play after a brief delay
+      setTimeout(() => {
+        current.play().catch(() => {});
+      }, 100);
+    </script>
+  </body>
+</html>

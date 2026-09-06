@@ -591,3 +591,50 @@ test(
     }
   },
 );
+
+test(
+  "multiple video elements for the same video share one View (YouTube Shorts duplicate fix)",
+  { timeout: 30_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      // Navigate to the YouTube Shorts simulator page with 3 <video> elements
+      // all showing the same video (simulates preloaded adjacent shorts)
+      await page.goto(taggedUrl(server, "/youtube-shorts-sim.html", tag, { src: "/fixtures/short.webm" }));
+
+      // Wait for at least one sample event (the middle element plays)
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "sample"), {
+        timeoutMs: 15_000,
+        message: "expected a sample event",
+      });
+
+      const views = viewsTagged(server, tag);
+      // Before the fix: 3 separate Views with same videoId but different view_ids
+      // After the fix: 1 View shared by all 3 elements
+      assert.equal(
+        views.length,
+        1,
+        `expected exactly 1 View for 3 elements of the same video, got ${views.length}: ${JSON.stringify(views.map((v) => v.viewId))}`,
+      );
+
+      const events = eventsTagged(server, tag);
+      // Should have mediaFound (once), play (when current element plays), and samples
+      const mediaFounds = events.filter((e) => e.type === "mediaFound");
+      assert.equal(
+        mediaFounds.length,
+        1,
+        `expected 1 mediaFound event for 1 View, got ${mediaFounds.length}`,
+      );
+
+      // Verify the single View has playback activity
+      const samples = events.filter((e) => e.type === "sample" && e.playing);
+      assert.ok(
+        samples.length > 0,
+        "expected the shared View to have playing samples from the active element",
+      );
+    } finally {
+      await page.close();
+    }
+  },
+);

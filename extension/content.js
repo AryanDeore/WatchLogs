@@ -221,6 +221,12 @@
     const persisted = new Map();
     const idCache = new Map();
     /**
+     * videoId -> viewId for views currently being opened (during ensureView).
+     * Prevents race conditions where multiple <video> elements for the same
+     * video all fire events before any has been added to tracked.
+     */
+    const pendingOpens = new Map();
+    /**
      * media element -> a stable disambiguation key, minted once per element
      * and kept for its life in this frame. An ad slot that swaps its
      * `currentSrc` on every loop is still the same element; keying on the
@@ -363,6 +369,8 @@
       if (metaTimer !== null) reportMetadata();
       for (const [media, entry] of tracked) {
         if (!isOpen(entry.viewId)) continue;
+        // Clean up pending opens when view ends
+        pendingOpens.delete(entry.key);
         apply(capture, {
           type: "VIEW_ENDED",
           at: Date.now(),
@@ -539,9 +547,16 @@
       // ad and the video it interrupts are one watch, not two. With no Adapter
       // there is nothing that reliable to go on, so each element keeps its own
       // View and two identical players on one page stay two Views.
+      //
+      // For YouTube Shorts and similar feeds, multiple <video> elements exist
+      // simultaneously (current short + preloaded adjacent shorts). When multiple
+      // elements for the same video fire loadedmetadata nearly simultaneously, check
+      // both already-tracked views and pending opens to ensure they all share one View.
       const sharing = bound.adapter
-        ? [...tracked.values()].find((open) => open.key === header.videoId && isOpen(open.viewId))
+        ? [...tracked.values()].find((open) => open.key === header.videoId && isOpen(open.viewId)) ||
+          (pendingOpens.has(header.videoId) ? { viewId: pendingOpens.get(header.videoId) } : undefined)
         : undefined;
+      
       const entry = {
         viewId: sharing?.viewId ?? ids.uuidv4(),
         key: header.videoId,
@@ -551,7 +566,14 @@
         // before the router notices can be caught — see `reportMetadata`.
         src: media.currentSrc || "",
       };
-      if (!sharing) apply(capture, { type: "OPEN", at: fact.at, viewId: entry.viewId, view: header });
+      
+      if (!sharing) {
+        // Mark this video as having an open View being created, so subsequent
+        // simultaneous elements for the same video will share it.
+        pendingOpens.set(header.videoId, entry.viewId);
+        apply(capture, { type: "OPEN", at: fact.at, viewId: entry.viewId, view: header });
+      }
+      
       tracked.set(media, entry);
       scheduleMetadata();
       return entry;
@@ -571,6 +593,8 @@
 
       if (header.videoId !== entry.key) {
         const viewId = ids.uuidv4();
+        // Clean up pending opens for the old video since it's ending
+        pendingOpens.delete(entry.key);
         apply(capture, {
           type: "CHANGE_VIDEO",
           at: fact.at,
