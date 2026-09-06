@@ -181,10 +181,9 @@ private struct VideoRow: View {
                     .padding(.leading, 22)
                     .padding(.top, 2.4)
             } else {
-                Text(video.isPlaying ? "Playing now" : video.isOpen ? "Still watching" : "No fixed length")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                DurationBar(fraction: nonFixedLengthBarFraction(video), height: barHeight)
                     .padding(.leading, 22)
+                    .padding(.top, 2.4)
             }
         }
     }
@@ -267,4 +266,11 @@ private let maxExtrapolationMs = 8_000
 private func extrapolatedWatchedMs(_ video: HistoryVideo, at now: Date) -> Int {
     let elapsedMs = Int(max(0, now.timeIntervalSince(video.lastWatchedAt)) * 1000)
     return video.watchedMs + min(elapsedMs, maxExtrapolationMs)
+}
+
+/// Non-fixed-length videos (for example live streams) have no truthful
+/// completion ratio. Show an activity bar instead: fraction of one hour
+/// watched, capped at full width.
+private func nonFixedLengthBarFraction(_ video: HistoryVideo) -> Double {
+    min(1, Double(video.watchedMs) / 3_600_000)
 }
