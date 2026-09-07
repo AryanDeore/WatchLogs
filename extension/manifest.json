@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WatchLogs",
-  "version": "0.1.1",
+  "version": "0.1.10",
   "description": "Captures video playback as raw Events and Flushes them to the WatchLogs menubar app over loopback.",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["http://127.0.0.1/*"],

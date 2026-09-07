@@ -148,11 +148,11 @@ test("the router proposes `embedded` and only the Adapter may correct it", () =>
   assert.equal(merge({ ...proposed, adapter: { confidence: "high" } }).embedded, true);
 });
 
-test("the length falls from the Adapter to the player to mediaSession", () => {
+test("the length falls from the Adapter to the player (never mediaSession)", () => {
   const adapter = { confidence: "high" };
   assert.equal(merge({ adapter: { ...adapter, durationSec: 213 }, element: { durationSec: 213.04 } }).durationSec, 213);
   assert.equal(merge({ adapter, element: { durationSec: 213.04 }, session: { durationSec: 999 } }).durationSec, 213.04);
-  assert.equal(merge({ adapter, session: { durationSec: 999 } }).durationSec, 999);
+  assert.equal(merge({ adapter, session: { durationSec: 999 } }).durationSec, null);
   // A live stream: the player reads `Infinity`, the caller filters it to null,
   // and nothing below it knows either.
   assert.equal(merge({ adapter, element: { durationSec: null } }).durationSec, null);

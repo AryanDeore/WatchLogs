@@ -1466,6 +1466,7 @@ public final class EventStore: @unchecked Sendable {
             groups[key] = group
         }
         return groups.map { key, group -> HistoryVideo in
+            let contentFormat = Self.readTimeContentFormat(stored: group.contentFormat, url: group.url)
             let coverage: Double?
             if !Self.hasFixedLengthDuration(durationSec: group.durationSec) {
                 coverage = nil
@@ -1489,13 +1490,19 @@ public final class EventStore: @unchecked Sendable {
                     }
                 }
                 if let current { covered += current.1 - current.0 }
-                coverage = min(1, covered / duration)
+                let uniqueCoverage = min(1, covered / duration)
+                if contentFormat == "short" {
+                    let watchedCoverage = min(1, Double(group.watchedMs) / (duration * 1000))
+                    coverage = max(uniqueCoverage, watchedCoverage)
+                } else {
+                    coverage = uniqueCoverage
+                }
             }
             let isPlaying = isOpenDay && group.open && group.maxWallEnd >= endMs - Self.playingGraceMs
             return HistoryVideo(
                 id: key, videoId: group.videoId,
                 service: ServiceDisplayBucket.from(service: group.service), sourceService: group.service,
-                contentFormat: Self.readTimeContentFormat(stored: group.contentFormat, url: group.url),
+                contentFormat: contentFormat,
                 embedded: group.embedded, title: group.title, author: group.author,
                 firstWatchedAt: Date(epochMillis: group.minWallStart),
                 lastWatchedAt: Date(epochMillis: group.maxWallEnd), watchedMs: group.watchedMs,

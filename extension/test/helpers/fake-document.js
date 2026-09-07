@@ -8,16 +8,21 @@
 /**
  * @param {Record<string, string|{content: string}>} elements  selector -> its
  *   text, or `{ content }` for a `<meta>`-style element read by attribute
- * @param {{ title?: string }} [page]
+ * @param {{ title?: string, defaultView?: object, jsonLd?: Array<object> }} [page]
  */
-export function fakeDocument(elements = {}, { title = "" } = {}) {
+export function fakeDocument(elements = {}, { title = "", defaultView = undefined, jsonLd = [] } = {}) {
   return {
     title,
+    defaultView,
     querySelector(selector) {
       if (!(selector in elements)) return null;
       const value = elements[selector];
       if (typeof value === "string") return { textContent: value, getAttribute: () => null };
       return { textContent: "", getAttribute: (name) => value[name] ?? null };
+    },
+    querySelectorAll(selector) {
+      if (selector !== 'script[type="application/ld+json"]') return [];
+      return jsonLd.map((entry) => ({ textContent: JSON.stringify(entry) }));
     },
   };
 }

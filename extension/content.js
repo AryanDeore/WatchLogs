@@ -25,6 +25,8 @@
 
 (() => {
   const SAMPLE_MS = 5000;
+  const DISCOVERY_MS = 1000;
+  const DEBUG_TRACE = true;
 
   /**
    * How long to wait for metadata to settle before reporting it.
@@ -36,6 +38,16 @@
    * that moved.
    */
   const META_DEBOUNCE_MS = 500;
+  const SHORTS_MEDIASESSION_SETTLE_MS = 1500;
+
+  /**
+   * How long a paused View may sit untouched before it is no longer active.
+   *
+   * One minute is deliberate: long enough not to split a normal "pause to read
+   * comments" into extra Views, short enough that an abandoned tab does not
+   * stay open for hours.
+   */
+  const PAUSED_OUT_MS = 60_000;
 
   /**
    * Media event -> what it means, in one table so the two can't drift apart.
@@ -188,6 +200,19 @@
     return chrome.runtime.sendMessage(message).catch(() => null);
   }
 
+  function debugTrace(event, data = {}) {
+    if (!DEBUG_TRACE) return;
+    const entry = {
+      event,
+      href: location.href,
+      ...data,
+    };
+    // Fast local signal while reproducing in DevTools.
+    console.debug("[WatchLogs trace]", entry);
+    // Persisted ring-buffer trace in extension storage.
+    void ask({ type: "debugTrace", entry });
+  }
+
   // --- The capture context ------------------------------------------------------
 
   function makeHelper({
@@ -237,6 +262,9 @@
     const slotKeys = new WeakMap();
     let nextSlot = 0;
     let sampleTimer = null;
+    let discoveryTimer = null;
+    /** viewId -> paused-out timeout id */
+    const pausedOutTimers = new Map();
     /**
      * The last instant this frame can vouch for: the beat that ran, or the
      * moment the timer started. `null` whenever no timer is running, because
@@ -250,6 +278,7 @@
     // with no Adapter, the same watcher over the page title. Neither reports
     // anything directly: both only start the wait.
     let unwatchMetadata = watchMetadata();
+    ensureDiscoveryTimer();
 
     // YouTube's own router announces a client-side navigation with this event,
     // fired on `document` — the one page-change shape `bindAdapter` never
@@ -378,6 +407,7 @@
           pos: media.currentTime,
           reason,
         });
+        cancelPausedOut(entry.viewId);
       }
       persistAll(true);
       // Nothing is tracked any more, so this stops the beat and drops the
@@ -414,6 +444,21 @@
         clearInterval(sampleTimer);
         sampleTimer = null;
         lastHeartbeatAt = null;
+      }
+    }
+
+    function ensureDiscoveryTimer() {
+      if (discoveryTimer !== null) return;
+      discoveryTimer = setInterval(discoverNow, DISCOVERY_MS);
+    }
+
+    function discoverNow() {
+      const at = Date.now();
+      const visible = document.visibilityState === "visible";
+      const bootstrapped = bootstrapUntrackedPlayers(at, visible);
+      if (bootstrapped) {
+        persistAll();
+        ensureTimer();
       }
     }
 
@@ -467,10 +512,12 @@
           // something this frame watched.
           pos: capture.lastSampleSnapshot[entry.viewId]?.pos,
         });
+        schedulePausedOut(entry.viewId);
       }
       for (const [media, entry] of tracked) {
         if (!isOpen(entry.viewId) || !isAdvancing(media)) continue;
         apply(capture, { type: "PLAY", at, viewId: entry.viewId, pos: media.currentTime });
+        cancelPausedOut(entry.viewId);
         entry.pos = media.currentTime;
       }
       persistAll(true);
@@ -480,6 +527,7 @@
       const at = Date.now();
       noticeWake(at);
       const visible = document.visibilityState === "visible";
+      bootstrapUntrackedPlayers(at, visible);
       for (const [media, entry] of [...tracked]) {
         if (isOpen(entry.viewId)) refresh(media, { at, pos: media.currentTime });
       }
@@ -506,6 +554,41 @@
       lastHeartbeatAt = at;
       persistAll(true);
       ensureTimer();
+    }
+
+    /**
+     * Safety net: if a player resumes after its View was auto-closed and the
+     * page fires no fresh media event we can catch, the next heartbeat still
+     * discovers it and re-opens capture without a page reload.
+     */
+    function bootstrapUntrackedPlayers(at, visible) {
+      let bootstrapped = false;
+      for (const media of document.querySelectorAll("video, audio")) {
+        if (tracked.has(media)) continue;
+        if (!wantsToPlay(media)) continue;
+        const entry = ensureView(media, {
+          kind: "sample",
+          media,
+          at,
+          pos: media.currentTime,
+          rate: media.playbackRate,
+          visible,
+          paused: media.paused,
+          ended: media.ended,
+          readyState: media.readyState,
+        });
+        if (!entry) continue;
+        apply(capture, {
+          type: "SAMPLE",
+          at,
+          viewId: entry.viewId,
+          pos: media.currentTime,
+          playing: isAdvancing(media),
+          visible,
+        });
+        bootstrapped = true;
+      }
+      return bootstrapped;
     }
 
     /** Every tracked player, the ones actually moving first. */
@@ -577,10 +660,25 @@
         // Mark this video as having an open View being created, so subsequent
         // simultaneous elements for the same video will share it.
         pendingOpens.set(header.videoId, entry.viewId);
+        debugTrace("open", {
+          viewId: entry.viewId,
+          videoId: header.videoId,
+          contentFormat: header.contentFormat,
+          title: header.title ?? null,
+          author: header.author ?? null,
+          durationSec: header.durationSec ?? null,
+          metadataSource: header.metadataSource ?? null,
+          adapterId: header.adapterId ?? null,
+        });
         apply(capture, { type: "OPEN", at: fact.at, viewId: entry.viewId, view: header });
       }
-      
+
       tracked.set(media, entry);
+      // `pendingOpens` is only for the tiny race while a View is being born.
+      // Once this element is tracked, future same-video joins should come from
+      // `tracked` itself; leaving the pending pointer behind can route a resume
+      // back to a closed View id.
+      if (pendingOpens.get(header.videoId) === entry.viewId) pendingOpens.delete(header.videoId);
       scheduleMetadata();
       return entry;
     }
@@ -601,13 +699,35 @@
         const viewId = ids.uuidv4();
         // Clean up pending opens for the old video since it's ending
         pendingOpens.delete(entry.key);
+        // At the exact boundary between Shorts, mediaSession often reports a
+        // mixed snapshot (new title with previous author, or vice versa). A
+        // wrong carry-over is worse than a brief blank, so boundary-opened
+        // Views start without prose when that prose came from mediaSession;
+        // the debounced metadata pass fills it once sources settle.
+        const boundaryHeader =
+          header.metadataSource === "mediaSession"
+            ? { ...header, title: null, author: null, durationSec: null }
+            : header;
+        debugTrace("change_video", {
+          fromViewId: entry.viewId,
+          toViewId: viewId,
+          fromVideoId: entry.key,
+          toVideoId: header.videoId,
+          title: header.title ?? null,
+          author: header.author ?? null,
+          durationSec: header.durationSec ?? null,
+          metadataSource: header.metadataSource ?? null,
+          adapterId: header.adapterId ?? null,
+          boundaryProseCleared: boundaryHeader !== header,
+          boundaryDurationCleared: boundaryHeader !== header,
+        });
         apply(capture, {
           type: "CHANGE_VIDEO",
           at: fact.at,
           pos: entry.pos,
           fromViewId: entry.viewId,
           viewId,
-          view: header,
+          view: boundaryHeader,
         });
         // Every element that was on the old video moves across together, or the
         // ad player would open a second View against the video that replaced it.
@@ -713,13 +833,59 @@
         reported.add(entry.viewId);
 
         const header = describe(media, entry);
-        const changed = meta.metadataDiff(capture.views[entry.viewId], {
+        const current = capture.views[entry.viewId];
+        let changed = meta.metadataDiff(current, {
           title: header.title,
           author: header.author,
           durationSec: header.durationSec,
           contentFormat: header.contentFormat,
         });
         if (!changed) continue;
+
+        // Shorts immediately after a boundary often carry a mixed mediaSession
+        // snapshot (new title, old author). During that short settle window,
+        // keep only non-prose changes and wait for a later, stable update.
+        if (
+          current?.contentFormat === "short" &&
+          header.metadataSource === "mediaSession" &&
+          at - (current.startedAt ?? at) < SHORTS_MEDIASESSION_SETTLE_MS
+        ) {
+          const filtered = { ...changed };
+          delete filtered.title;
+          delete filtered.author;
+          if (Object.keys(filtered).length === 0) {
+            debugTrace("metadata_change_suppressed", {
+              viewId: entry.viewId,
+              videoId: current?.videoId ?? null,
+              settleMs: SHORTS_MEDIASESSION_SETTLE_MS,
+              changed,
+              next: {
+                title: header.title ?? null,
+                author: header.author ?? null,
+                durationSec: header.durationSec ?? null,
+                contentFormat: header.contentFormat ?? null,
+                metadataSource: header.metadataSource ?? null,
+                adapterId: header.adapterId ?? null,
+              },
+            });
+            continue;
+          }
+          changed = filtered;
+        }
+
+        debugTrace("metadata_change", {
+          viewId: entry.viewId,
+          videoId: capture.views[entry.viewId]?.videoId ?? null,
+          changed,
+          next: {
+            title: header.title ?? null,
+            author: header.author ?? null,
+            durationSec: header.durationSec ?? null,
+            contentFormat: header.contentFormat ?? null,
+            metadataSource: header.metadataSource ?? null,
+            adapterId: header.adapterId ?? null,
+          },
+        });
 
         apply(capture, {
           type: "META",
@@ -743,11 +909,45 @@
       return capture.order.find((id) => capture.views[id].open);
     }
 
+    function schedulePausedOut(viewId) {
+      cancelPausedOut(viewId);
+      pausedOutTimers.set(
+        viewId,
+        setTimeout(() => {
+          pausedOutTimers.delete(viewId);
+          if (!isOpen(viewId)) return;
+
+          const players = [...tracked].filter(([, entry]) => entry.viewId === viewId);
+          if (players.some(([media]) => wantsToPlay(media))) return;
+
+          apply(capture, {
+            type: "VIEW_ENDED",
+            at: Date.now(),
+            viewId,
+            pos: positionOf(viewId) ?? capture.lastSampleSnapshot[viewId]?.pos,
+            reason: "paused-out",
+          });
+          persistAll(true);
+          ensureTimer();
+        }, PAUSED_OUT_MS),
+      );
+    }
+
+    function cancelPausedOut(viewId) {
+      const timer = pausedOutTimers.get(viewId);
+      if (timer !== undefined) clearTimeout(timer);
+      pausedOutTimers.delete(viewId);
+    }
+
     function act(fact, action, flush = false) {
       const entry = tracked.get(fact.media);
       if (!entry) return;
       apply(capture, { ...action, at: fact.at, viewId: entry.viewId, pos: fact.pos });
       entry.pos = fact.pos;
+
+      if (action.type === "PAUSE") schedulePausedOut(entry.viewId);
+      else if (action.type === "PLAY" || action.type === "VIEW_ENDED") cancelPausedOut(entry.viewId);
+
       if (flush) persistAll(true);
     }
 
@@ -779,6 +979,10 @@
 
     /** Drop a closed View from this frame's working set; the buffer still has it. */
     function forget(viewId) {
+      cancelPausedOut(viewId);
+      for (const [videoId, pendingViewId] of pendingOpens) {
+        if (pendingViewId === viewId) pendingOpens.delete(videoId);
+      }
       for (const [media, entry] of tracked) {
         if (entry.viewId === viewId) tracked.delete(media);
       }
@@ -793,9 +997,15 @@
     function stopOnTeardown() {
       // The extension was reloaded or the browser is shutting down: stop the
       // cadence rather than throwing on every tick.
-      if (!chrome.runtime?.id && sampleTimer !== null) {
-        clearInterval(sampleTimer);
-        sampleTimer = null;
+      if (!chrome.runtime?.id) {
+        if (sampleTimer !== null) {
+          clearInterval(sampleTimer);
+          sampleTimer = null;
+        }
+        if (discoveryTimer !== null) {
+          clearInterval(discoveryTimer);
+          discoveryTimer = null;
+        }
         clearTimeout(metaTimer);
         metaTimer = null;
       }

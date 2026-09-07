@@ -176,12 +176,11 @@ private struct VideoRow: View {
                 }
             }
 
+            // Draw a completion bar only when the row has a trustworthy
+            // fixed-length coverage ratio. With the YouTube duration recovery
+            // in place, Shorts can show this too when that ratio is known.
             if let coverage = video.coverage {
                 DurationBar(fraction: coverage, height: barHeight)
-                    .padding(.leading, 22)
-                    .padding(.top, 2.4)
-            } else {
-                DurationBar(fraction: nonFixedLengthBarFraction(video), height: barHeight)
                     .padding(.leading, 22)
                     .padding(.top, 2.4)
             }
@@ -268,9 +267,3 @@ private func extrapolatedWatchedMs(_ video: HistoryVideo, at now: Date) -> Int {
     return video.watchedMs + min(elapsedMs, maxExtrapolationMs)
 }
 
-/// Non-fixed-length videos (for example live streams) have no truthful
-/// completion ratio. Show an activity bar instead: fraction of one hour
-/// watched, capped at full width.
-private func nonFixedLengthBarFraction(_ video: HistoryVideo) -> Double {
-    min(1, Double(video.watchedMs) / 3_600_000)
-}

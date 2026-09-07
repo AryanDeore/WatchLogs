@@ -23,6 +23,8 @@ const INSTANCE_KEY = "extInstanceId";
 const PENDING_FLUSH_KEY = "pendingFlushId";
 const RUN_KEY = "runId";
 const SWEEP_ALARM = "watchlogs-sweep";
+const DEBUG_TRACE_KEY = "wl:debug:trace";
+const DEBUG_TRACE_LIMIT = 200;
 /** The backstop cadence: 30 s, the shortest `chrome.alarms` will honour. */
 const SWEEP_MINUTES = 0.5;
 
@@ -58,6 +60,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     case "getState":
       void readState().then(sendResponse);
+      return true;
+    case "debugTrace":
+      void appendDebugTrace(message.entry).then(() => sendResponse({ ok: true }));
+      return true;
+    case "debugBundle":
+      void buildDebugBundle().then((bundle) => sendResponse({ ok: true, bundle }));
       return true;
     default:
       return false;
@@ -294,6 +302,52 @@ async function readState() {
 
 async function writeState(state) {
   await chrome.storage.local.set({ [STATE_KEY]: state });
+}
+
+async function buildDebugBundle() {
+  const [local, session, state] = await Promise.all([
+    chrome.storage.local.get(null),
+    chrome.storage.session.get(null),
+    readState(),
+  ]);
+  const trace = Array.isArray(local[DEBUG_TRACE_KEY]) ? local[DEBUG_TRACE_KEY] : [];
+  const views = Object.entries(local)
+    .filter(([key]) => key.startsWith("wl:view:"))
+    .map(([, value]) => value)
+    .sort((a, b) => (a?.startedAt ?? 0) - (b?.startedAt ?? 0));
+  const events = Object.entries(local)
+    .filter(([key]) => key.startsWith("wl:event:"))
+    .map(([, value]) => value)
+    .sort((a, b) => (a?.t ?? 0) - (b?.t ?? 0));
+
+  return {
+    capturedAt: Date.now(),
+    extensionVersion: chrome.runtime.getManifest().version,
+    connectionState: state,
+    counters: {
+      trace: trace.length,
+      views: views.length,
+      events: events.length,
+    },
+    run: {
+      runId: session[RUN_KEY] ?? null,
+      pendingFlushId: local[PENDING_FLUSH_KEY] ?? null,
+    },
+    trace,
+    views,
+    events,
+  };
+}
+
+async function appendDebugTrace(entry) {
+  if (!entry || typeof entry !== "object") return;
+  const now = Date.now();
+  const stamped = { at: now, ...entry };
+  const current = (await chrome.storage.local.get(DEBUG_TRACE_KEY))[DEBUG_TRACE_KEY];
+  const trace = Array.isArray(current) ? current : [];
+  trace.push(stamped);
+  if (trace.length > DEBUG_TRACE_LIMIT) trace.splice(0, trace.length - DEBUG_TRACE_LIMIT);
+  await chrome.storage.local.set({ [DEBUG_TRACE_KEY]: trace });
 }
 
 async function agentInfo() {
