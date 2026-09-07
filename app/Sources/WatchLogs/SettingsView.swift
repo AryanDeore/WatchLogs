@@ -18,7 +18,7 @@ struct SettingsView: View {
     @State private var launchAtLogin: Bool = false
     
     private let launchAtLoginManager = LaunchAtLoginManager()
-    private let version = "0.1.2"
+    private let version = "0.1.6"
     private let buildNumber = "1"
 
     var body: some View {

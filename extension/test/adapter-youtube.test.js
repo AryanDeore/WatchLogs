@@ -8,10 +8,10 @@ import assert from "node:assert/strict";
 import { YouTubeAdapter } from "../src/adapters/youtube.js";
 import { fakeDocument } from "./helpers/fake-document.js";
 
-function read(href, elements = {}) {
+function read(href, elements = {}, page = {}) {
   return YouTubeAdapter.create({
     location: new URL(href),
-    document: fakeDocument(elements),
+    document: fakeDocument(elements, page),
   }).read();
 }
 
@@ -73,7 +73,35 @@ test("a very large duration placeholder is never reported as a fixed length", ()
   assert.equal("durationSec" in snapshot, false);
 });
 
-test("a page with no duration markup reports no length, not zero", () => {
+test("a Shorts page takes duration from ytInitialPlayerResponse videoDetails", () => {
+  const snapshot = read(
+    "https://www.youtube.com/shorts/x8kL9mQ2vNc",
+    {},
+    { defaultView: { ytInitialPlayerResponse: { videoDetails: { lengthSeconds: "157" } } } },
+  );
+  assert.equal(snapshot.durationSec, 157);
+});
+
+test("when player response names the current video, that id outranks a stale URL id", () => {
+  const snapshot = read(
+    "https://www.youtube.com/shorts/STALEID",
+    WATCH_PAGE,
+    { defaultView: { ytInitialPlayerResponse: { videoDetails: { videoId: "FRESHID" } } } },
+  );
+  assert.equal(snapshot.videoId, "FRESHID");
+  assert.equal(snapshot.confidence, "high");
+});
+
+test("a Shorts page falls back to JSON-LD duration when meta and player response are absent", () => {
+  const snapshot = read(
+    "https://www.youtube.com/shorts/x8kL9mQ2vNc",
+    {},
+    { jsonLd: [{ "@type": "VideoObject", duration: "PT2M38S" }] },
+  );
+  assert.equal(snapshot.durationSec, 158);
+});
+
+test("a page with no known duration source reports no length, not zero", () => {
   const snapshot = read("https://www.youtube.com/shorts/x8kL9mQ2vNc");
   assert.equal("durationSec" in snapshot, false);
 });

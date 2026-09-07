@@ -17,7 +17,7 @@
 //   embedded                 router proposes, Adapter may correct
 //   title                    mediaSession -> Adapter -> og:title -> document.title
 //   author                   Adapter -> mediaSession -> generic
-//   durationSec              Adapter -> <video> -> mediaSession
+//   durationSec              Adapter -> <video>
 //
 // `videoId` never takes mediaSession because there is no id there — only
 // strings a human reads, and a title is not an identity: two uploads of one
@@ -110,7 +110,6 @@ export function merge({ router = {}, adapter = null, session = {}, element = {},
     durationSec: firstAnswer([
       fromAdapter("durationSec"),
       ["element", element.durationSec],
-      fromSession("durationSec"),
     ]).value,
     // Provenance, minimally: which Adapter ran, and where the title — and only
     // the title — came from. Per-field provenance was rejected as storage

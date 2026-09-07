@@ -79,14 +79,15 @@ export const YouTubeAdapter = {
         const shape = fromUrl(url) ?? {};
         const title = firstText(document, TITLE_SELECTORS);
         const contentFormat = shape.contentFormat ?? "standard";
+        const videoId = currentVideoId(document) ?? shape.videoId;
         return {
-          videoId: shape.videoId,
+          videoId,
           contentFormat,
           ...(shape.embedded ? { embedded: true } : {}),
           ...(title === undefined ? {} : { title }),
           ...withAuthor(document),
           ...withDuration(document),
-          confidence: confidenceOf(shape.videoId, title),
+          confidence: confidenceOf(videoId, title),
         };
       },
       onChange(cb) {
@@ -111,8 +112,90 @@ function withAuthor(document) {
  * usually YouTube's sliding DVR window, not a video's duration.
  */
 function withDuration(document) {
-  const durationSec = parseIsoDuration(
-    document.querySelector('meta[itemprop="duration"]')?.getAttribute("content"),
-  );
+  const durationSec =
+    fromSeoMeta(document)
+    ?? fromInitialPlayerResponse(document)
+    ?? fromJsonLd(document)
+    ?? fromPlaybackTrackingLen(document)
+    ?? fromStreamingApproxDuration(document);
   return durationSec !== null && durationSec <= 12 * 60 * 60 ? { durationSec } : {};
+}
+
+function currentVideoId(document) {
+  const response = initialPlayerResponse(document);
+  const id = response?.videoDetails?.videoId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+function fromSeoMeta(document) {
+  return parseIsoDuration(document.querySelector('meta[itemprop="duration"]')?.getAttribute("content"));
+}
+
+function fromInitialPlayerResponse(document) {
+  const response = initialPlayerResponse(document);
+  return parseDurationSeconds(
+    response?.videoDetails?.lengthSeconds
+    ?? response?.microformat?.playerMicroformatRenderer?.lengthSeconds,
+  );
+}
+
+function fromJsonLd(document) {
+  if (typeof document.querySelectorAll !== "function") return null;
+  const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of scripts) {
+    const text = script?.textContent?.trim();
+    if (!text) continue;
+    const parsed = safeJson(text);
+    if (!parsed) continue;
+    for (const node of asArray(parsed)) {
+      const durationSec = parseIsoDuration(node?.duration);
+      if (durationSec !== null) return durationSec;
+    }
+  }
+  return null;
+}
+
+function fromPlaybackTrackingLen(document) {
+  const response = initialPlayerResponse(document);
+  const baseUrl = response?.playbackTracking?.videostatsPlaybackUrl?.baseUrl;
+  if (!baseUrl) return null;
+  try {
+    return parseDurationSeconds(new URL(baseUrl).searchParams.get("len"));
+  } catch {
+    return null;
+  }
+}
+
+function fromStreamingApproxDuration(document) {
+  const response = initialPlayerResponse(document);
+  if (!response) return null;
+  const allFormats = [...asArray(response.streamingData?.formats), ...asArray(response.streamingData?.adaptiveFormats)];
+  for (const format of allFormats) {
+    const ms = Number(format?.approxDurationMs);
+    if (!Number.isFinite(ms) || ms <= 0) continue;
+    return ms / 1000;
+  }
+  return null;
+}
+
+function initialPlayerResponse(document) {
+  const response = document.defaultView?.ytInitialPlayerResponse;
+  return response && typeof response === "object" ? response : null;
+}
+
+function parseDurationSeconds(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+function safeJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [value];
 }
