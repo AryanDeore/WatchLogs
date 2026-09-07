@@ -7,14 +7,14 @@ import Testing
 /// flush that triggered a premature boundary freeze.
 @Suite("Day boundary race condition (2026-09-06 fix)")
 struct DayBoundaryRaceConditionTest {
-    private let utc: Calendar = {
+    private let localCalendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = .current
         return calendar
     }()
 
     private func date(_ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int = 0, _ sec: Int = 0) -> Date {
-        utc.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min, second: sec))!
+        localCalendar.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min, second: sec))!
     }
 
     @Test("backlog check prevents freeze when activity is near target hour and might still be in flight")
@@ -90,7 +90,7 @@ struct DayBoundaryRaceConditionTest {
         // At this point, WITHOUT THE FIX, the day would freeze at 04:00
         // because the backlog check wouldn't see the crossing segment yet.
         // WITH THE FIX, it should detect activity near the boundary and wait.
-        let afterFirstFlush = try store.activityDay(now: Date(epochMillis: flushAt04_00_31), calendar: utc)
+        let afterFirstFlush = try store.activityDay(now: Date(epochMillis: flushAt04_00_31), calendar: localCalendar)
         let expectedDayStart = date(2026, 9, 5, 4, 0, 1)
         #expect(afterFirstFlush == expectedDayStart, "Day should still be open after first flush")
         
@@ -108,15 +108,17 @@ struct DayBoundaryRaceConditionTest {
         )
         
         // Day should STILL not be frozen (within the 90-minute window)
-        let afterCrossingFlush = try store.activityDay(now: Date(epochMillis: flushAt04_00_36), calendar: utc)
+        let afterCrossingFlush = try store.activityDay(now: Date(epochMillis: flushAt04_00_36), calendar: localCalendar)
         #expect(afterCrossingFlush == expectedDayStart, "Day should still be open after crossing flush arrives")
         
-        // Fast forward to 90 minutes after the crossing activity ended (05:30:05)
-        let afterSlideWindow = date(2026, 9, 6, 5, 30, 6).epochMillis
-        let frozenStart = try store.activityDay(now: Date(epochMillis: afterSlideWindow), calendar: utc)
-        
-        // NOW the day should have slid and frozen
-        let expectedBoundary = date(2026, 9, 6, 5, 30, 5)  // 90 min after 04:00:05
+        // Fast forward to 90 minutes after the latest near-target activity
+        // ended. `afterView` ends at 04:00:30, so the slid boundary confirms at
+        // 05:30:30.
+        let afterSlideWindow = date(2026, 9, 6, 5, 30, 31).epochMillis
+        let frozenStart = try store.activityDay(now: Date(epochMillis: afterSlideWindow), calendar: localCalendar)
+
+        // NOW the day should have slid and frozen.
+        let expectedBoundary = date(2026, 9, 6, 5, 30, 30)
         #expect(frozenStart == expectedBoundary, "New day should start at the slid boundary")
         
         // Verify the frozen day
@@ -176,7 +178,7 @@ struct DayBoundaryRaceConditionTest {
         
         // Jump to 04:00 the next day - activity ended 8 hours ago, way past the 3-minute threshold
         let nextTarget = date(2026, 9, 6, 4, 0, 0).epochMillis
-        let openStart = try store.activityDay(now: Date(epochMillis: nextTarget), calendar: utc)
+        let openStart = try store.activityDay(now: Date(epochMillis: nextTarget), calendar: localCalendar)
         
         // Should freeze immediately at the target hour (no activity at target)
         #expect(openStart == date(2026, 9, 6, 4, 0, 0), "Should freeze at target hour immediately")

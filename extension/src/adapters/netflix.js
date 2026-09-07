@@ -10,6 +10,8 @@
 
 import { confidenceOf, firstText, observeTitle } from "./shared.js";
 
+const METADATA_TTL_MS = 60_000;
+
 /** `/watch/NNNNNNNN`, with or without a country prefix like `/gb/`. */
 const WATCH_PATH = /(?:^|\/)watch\/(\d+)/;
 
@@ -29,6 +31,50 @@ function videoIdFrom(url) {
   return url.pathname.match(WATCH_PATH)?.[1];
 }
 
+function metadataUrl(watchId) {
+  const url = new URL("https://www.netflix.com/nq/website/memberapi/release/metadata");
+  url.searchParams.set("movieid", watchId);
+  url.searchParams.set("_", String(Date.now()));
+  return url;
+}
+
+function pickEpisode(video, watchId) {
+  const wanted = String(watchId ?? video?.currentEpisode ?? "");
+  for (const season of video?.seasons ?? []) {
+    for (const episode of season?.episodes ?? []) {
+      if (String(episode?.episodeId ?? "") === wanted) return episode;
+    }
+  }
+  return null;
+}
+
+function asPositiveNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function fromMetadata(video, watchId) {
+  if (!video || typeof video !== "object") return null;
+  const showOrMovie = typeof video.title === "string" && video.title.trim() ? video.title.trim() : undefined;
+  if (!showOrMovie) return null;
+
+  if (video.type === "show") {
+    const episode = pickEpisode(video, watchId);
+    const episodeTitle = typeof episode?.title === "string" && episode.title.trim() ? episode.title.trim() : undefined;
+    return {
+      ...(episodeTitle ? { title: `${showOrMovie} - ${episodeTitle}` } : { title: showOrMovie }),
+      author: showOrMovie,
+      ...(asPositiveNumber(episode?.runtime) === undefined ? {} : { durationSec: asPositiveNumber(episode?.runtime) }),
+    };
+  }
+
+  return {
+    title: showOrMovie,
+    author: "",
+    ...(asPositiveNumber(video.runtime) === undefined ? {} : { durationSec: asPositiveNumber(video.runtime) }),
+  };
+}
+
 export const NetflixAdapter = {
   id: "netflix",
   service: "netflix",
@@ -39,30 +85,63 @@ export const NetflixAdapter = {
   },
 
   create({ location, document }) {
+    const cache = new Map();
+    const inFlight = new Set();
+    const listeners = new Set();
+
+    function notify() {
+      for (const cb of listeners) cb();
+    }
+
+    function primeMetadata(watchId) {
+      if (!watchId) return;
+      const cached = cache.get(watchId);
+      if (cached && Date.now() - cached.at < METADATA_TTL_MS) return;
+      if (inFlight.has(watchId)) return;
+
+      inFlight.add(watchId);
+      fetch(metadataUrl(watchId))
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload) => {
+          const mapped = fromMetadata(payload?.video, watchId);
+          if (!mapped) return;
+          cache.set(watchId, { at: Date.now(), mapped });
+          notify();
+        })
+        .catch(() => {})
+        .finally(() => {
+          inFlight.delete(watchId);
+        });
+    }
+
     return {
       read() {
         const videoId = videoIdFrom(new URL(location.href));
+        primeMetadata(videoId);
+
+        const fromApi = videoId ? cache.get(videoId)?.mapped : null;
         const show = firstText(document, SHOW_SELECTORS);
         const episode = firstText(document, EPISODE_SELECTORS);
 
-        // Series: the show is the author and the episode rides in the title,
-        // because the wire carries no season or episode fields. Film: the
-        // author is *known* to be nothing, which is not the same as unknown —
-        // the empty string stops the ranking before mediaSession can offer
-        // "Netflix" as the creator of Glass Onion.
-        const title = show && episode ? `${show} - ${episode}` : show;
-        const author = show ? (episode ? show : "") : undefined;
+        const title = fromApi?.title ?? (show && episode ? `${show} - ${episode}` : show);
+        const author = fromApi?.author ?? (show ? (episode ? show : "") : undefined);
 
         return {
           videoId,
           contentFormat: "standard",
           ...(title === undefined ? {} : { title }),
           ...(author === undefined ? {} : { author }),
+          ...(fromApi?.durationSec === undefined ? {} : { durationSec: fromApi.durationSec }),
           confidence: confidenceOf(videoId, title),
         };
       },
       onChange(cb) {
-        return observeTitle(document, cb);
+        listeners.add(cb);
+        const unobserve = observeTitle(document, cb);
+        return () => {
+          listeners.delete(cb);
+          unobserve();
+        };
       },
     };
   },

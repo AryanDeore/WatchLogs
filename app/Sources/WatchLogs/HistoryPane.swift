@@ -129,8 +129,8 @@ private struct VideoRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     HStack(spacing: 5) {
-                        if let author = video.author {
-                            Text(author)
+                        if let subtitle = subtitlePrefix(video) {
+                            Text(subtitle)
                             Text("·")
                         }
                         Text(clockTime(video.lastWatchedAt))
@@ -237,6 +237,16 @@ private let clockTimeFormatter: DateFormatter = {
 
 private func clockTime(_ date: Date) -> String {
     clockTimeFormatter.string(from: date)
+}
+
+private func subtitlePrefix(_ video: HistoryVideo) -> String? {
+    if let author = video.author?.trimmingCharacters(in: .whitespacesAndNewlines), !author.isEmpty {
+        return author
+    }
+    if video.service == .netflix, !video.videoId.hasPrefix("sha1:") {
+        return "Movie"
+    }
+    return nil
 }
 
 /// `isPlaying` carries its own 20s "maybe still buffering" grace

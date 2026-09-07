@@ -1536,21 +1536,21 @@ public final class EventStore: @unchecked Sendable {
     /// A generic-fallback View is identified by hashing the page's own address
     /// (`content.js`'s `videoIdFor`) rather than the video — deliberately, since
     /// most Adapter-less sites keep no id in their query string worth trusting.
-    /// YouTube is the one site that does (`?v=`), so a stored id that is one of
-    /// these hashes, on a View whose own `url` names a real YouTube video,
-    /// recovers that video's true id here, at read time — the same technique
-    /// `readTimeContentFormat` already uses for the Shorts format. Recovering to
-    /// the exact id a bound Adapter would itself have reported (not some
+    /// YouTube and Netflix are the two services where a watch URL carries a
+    /// stable per-video id (`?v=` or `/watch/<id>`), so a stored id that is one
+    /// of these hashes, on a View whose own `url` names a real watch page,
+    /// recovers that video's true id here at read time. Recovering to the exact
+    /// id a bound Adapter would itself have reported (not some
     /// separately-namespaced value) means a View that briefly fell back to the
     /// hash before its Adapter caught up folds into the very same row as the
     /// rest of that watch, past or future, instead of sitting apart from it
-    /// forever. A hover-preview whose own page never named a video (the bare
-    /// home feed) has nothing to recover and keeps its shared, honestly
-    /// anonymous id — there is no way to know, after the fact, which preview it
-    /// was.
+    /// forever. A preview page whose own URL never named a video has nothing to
+    /// recover and keeps its shared, honestly anonymous id.
     static func readTimeVideoId(stored: String, url: String) -> String {
-        guard stored.hasPrefix("sha1:"), let recovered = youTubeVideoId(fromURL: url) else { return stored }
-        return recovered
+        guard stored.hasPrefix("sha1:") else { return stored }
+        if let recovered = youTubeVideoId(fromURL: url) { return recovered }
+        if let recovered = netflixVideoId(fromURL: url) { return recovered }
+        return stored
     }
 
     /// Whether a reported duration behaves like a real fixed video length.
@@ -1581,6 +1581,18 @@ public final class EventStore: @unchecked Sendable {
             return id?.isEmpty == false ? id : nil
         }
         return nil
+    }
+
+    /// The id a bound `NetflixAdapter` would report for `url`, mirroring its
+    /// own watch-path matcher (`extension/src/adapters/netflix.js`).
+    private static func netflixVideoId(fromURL url: String) -> String? {
+        guard let components = URLComponents(string: url), let host = components.host?.lowercased() else { return nil }
+        guard host == "netflix.com" || host.hasSuffix(".netflix.com") else { return nil }
+        let labels = components.path.split(separator: "/")
+        guard let watchIndex = labels.firstIndex(of: "watch"), watchIndex + 1 < labels.count else { return nil }
+        let id = String(labels[watchIndex + 1])
+        guard !id.isEmpty, id.allSatisfy(\.isNumber) else { return nil }
+        return id
     }
 
     private func loadSegments(viewId: String) throws -> [Segment] {

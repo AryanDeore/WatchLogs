@@ -1,6 +1,6 @@
 {
   "name": "watchlogs-extension",
-  "version": "0.1.10",
+  "version": "0.1.14",
   "private": true,
   "type": "module",
   "description": "Tracer-bullet Chromium extension for WatchLogs issue #26.",

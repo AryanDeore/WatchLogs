@@ -26,7 +26,7 @@ struct TitleRow: View {
             HStack(spacing: 6) {
                 Text("WatchLogs")
                     .font(.headline)
-                Text("v0.1.6")
+                Text("v0.1.10")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
