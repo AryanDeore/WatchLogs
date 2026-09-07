@@ -239,9 +239,11 @@
     // never hold one, and an ad iframe should not pay for a lookup it will
     // never use.
     let bound = bindAdapter({ location, document });
+    let lastBoundHref = location.href;
 
     /** media element -> { viewId, key, pos, disambiguate } */
     const tracked = new Map();
+    let forcingNetflixRebind = false;
     /** viewId -> the highest seq already on disk */
     const persisted = new Map();
     const idCache = new Map();
@@ -310,11 +312,27 @@
     function rebind() {
       unwatchMetadata();
       bound = bindAdapter({ location, document });
+      lastBoundHref = location.href;
       unwatchMetadata = watchMetadata();
+
+      // Netflix and similar Adapter-covered hosts can client-route from a real
+      // watch page to a browse/preview URL without reloading. Once the Adapter
+      // declines the new URL, any View still open belongs to the page before
+      // that navigation and must close now rather than keep sampling previews.
+      if (!bound.adapter && bound.adapterCovered) {
+        endAll("nav");
+        return;
+      }
+
       const at = Date.now();
       for (const [media, entry] of [...tracked]) {
         if (isOpen(entry.viewId)) refresh(media, { at, pos: media.currentTime });
       }
+    }
+
+    function refreshBindingIfUrlChanged() {
+      if (location.href === lastBoundHref) return;
+      rebind();
     }
 
     return { handle, note, setVisible, endAll, noticeWake };
@@ -322,6 +340,7 @@
     // --- What just happened -----------------------------------------------------
 
     function handle(fact) {
+      refreshBindingIfUrlChanged();
       noticeWake(fact.at);
       const entry = ensureView(fact.media, fact);
       if (!entry) return;
@@ -453,6 +472,7 @@
     }
 
     function discoverNow() {
+      refreshBindingIfUrlChanged();
       const at = Date.now();
       const visible = document.visibilityState === "visible";
       const bootstrapped = bootstrapUntrackedPlayers(at, visible);
@@ -524,6 +544,7 @@
     }
 
     function tick() {
+      refreshBindingIfUrlChanged();
       const at = Date.now();
       noticeWake(at);
       const visible = document.visibilityState === "visible";
@@ -599,6 +620,15 @@
 
     // --- One media element, one View ----------------------------------------------
 
+    function isNetflixWatchUrl(href = location.href) {
+      try {
+        const url = new URL(href);
+        return url.hostname.endsWith("netflix.com") && /(?:^|\/)watch\/\d+/.test(url.pathname);
+      } catch {
+        return false;
+      }
+    }
+
     /** This element's own disambiguation key, minted once and kept. */
     function slotKeyFor(media) {
       if (!slotKeys.has(media)) slotKeys.set(media, `slot-${nextSlot++}`);
@@ -617,6 +647,18 @@
       // Adapter-bound frame is trusted; on a frame with no Adapter, that
       // shape opens no View at all.
       if (!bound.adapter && !isVisiblyPlayable(media)) return null;
+
+      // A `/watch/<id>` Netflix URL with no bound Adapter is almost always a
+      // stale bind decision from just before navigation settled. Rebind once
+      // right here, before deciding this element is ineligible.
+      if (!bound.adapter && isNetflixWatchUrl() && !forcingNetflixRebind) {
+        forcingNetflixRebind = true;
+        try {
+          rebind();
+        } finally {
+          forcingNetflixRebind = false;
+        }
+      }
 
       // On a site that ships an Adapter, "no Adapter bound" can mean either
       // "this site has no Adapter" (generic fallback allowed) or "this site's

@@ -6,6 +6,12 @@ import assert from "node:assert/strict";
 import { NetflixAdapter } from "../src/adapters/netflix.js";
 import { fakeDocument } from "./helpers/fake-document.js";
 
+const originalFetch = globalThis.fetch;
+
+test.afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
 function read(href, elements = {}) {
   return NetflixAdapter.create({
     location: new URL(href),
@@ -66,4 +72,88 @@ test("the Adapter steps aside from browsing, and takes the watch page", () => {
 
 test("Netflix has no Shorts and no live, so the format never moves", () => {
   assert.equal(read("https://www.netflix.com/watch/81234567").contentFormat, "standard");
+});
+
+test("metadata endpoint fields override brittle DOM and populate runtime for shows", async () => {
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        video: {
+          type: "show",
+          title: "Stranger Things",
+          currentEpisode: 81234567,
+          seasons: [{ episodes: [{ episodeId: 81234567, title: "Chapter Four", runtime: 3300 }] }],
+        },
+      };
+    },
+  });
+
+  const adapter = NetflixAdapter.create({
+    location: new URL("https://www.netflix.com/watch/81234567"),
+    document: fakeDocument({}),
+  });
+
+  const first = adapter.read();
+  assert.equal(first.title, undefined);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const settled = adapter.read();
+  assert.equal(settled.title, "Stranger Things - Chapter Four");
+  assert.equal(settled.author, "Stranger Things");
+  assert.equal(settled.durationSec, 3300);
+});
+
+test("metadata endpoint fields keep movie author empty and can fill duration", async () => {
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        video: {
+          type: "movie",
+          title: "Glass Onion: A Knives Out Mystery",
+          runtime: 8350,
+        },
+      };
+    },
+  });
+
+  const adapter = NetflixAdapter.create({
+    location: new URL("https://www.netflix.com/watch/81444554"),
+    document: fakeDocument({}),
+  });
+
+  adapter.read();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const settled = adapter.read();
+  assert.equal(settled.title, "Glass Onion: A Knives Out Mystery");
+  assert.equal(settled.author, "");
+  assert.equal(settled.durationSec, 8350);
+});
+
+test("when metadata fetch fails, DOM extraction remains the fallback", async () => {
+  globalThis.fetch = async () => {
+    throw new Error("network down");
+  };
+
+  const adapter = NetflixAdapter.create({
+    location: new URL("https://www.netflix.com/watch/81234567"),
+    document: fakeDocument({
+      "[data-uia=video-title] h4": "House of Cards",
+      "[data-uia=video-title] span:last-of-type": "Chapter 1",
+    }),
+  });
+
+  const snapshot = adapter.read();
+  assert.equal(snapshot.videoId, "81234567");
+  assert.equal(snapshot.title, "House of Cards - Chapter 1");
+  assert.equal(snapshot.author, "House of Cards");
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const afterFailure = adapter.read();
+  assert.equal(afterFailure.title, "House of Cards - Chapter 1");
+  assert.equal(afterFailure.author, "House of Cards");
 });

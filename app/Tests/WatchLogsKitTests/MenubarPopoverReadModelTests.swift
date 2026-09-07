@@ -488,6 +488,65 @@ struct MenubarPopoverReadModelTests {
         #expect(row.watchedMs == 6_000 + 135_000)
     }
 
+    @Test("History folds a generic Netflix watch-page split into the same video row")
+    func historyRecoversNetflixVideoIdAndFoldsWithContinuation() throws {
+        let start = local(2024, 1, 1, 12).epochMillis
+        let store = try EventStore(path: ":memory:")
+        _ = try store.record(flush(sentAt: start - 1, views: []), serverTime: start - 1)
+
+        let genericStart = FlushView(
+            viewId: "nf-before", service: "netflix.com", videoId: "sha1:deadbeef",
+            url: "https://www.netflix.com/watch/81462335", tabId: 9,
+            startedAt: start, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start, pos: 0),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 4_000, pos: 4, reason: "video-changed"),
+            ])
+        let adaptedContinuation = FlushView(
+            viewId: "nf-after", service: "netflix", videoId: "81462335",
+            url: "https://www.netflix.com/watch/81462335", durationSec: 7_200, adapterId: "netflix",
+            tabId: 9, startedAt: start + 4_000, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start + 4_000, pos: 4),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 124_000, pos: 124, reason: "nav"),
+            ])
+        _ = try store.record(flush(sentAt: start + 124_000, views: [genericStart, adaptedContinuation]), serverTime: start + 124_000)
+
+        let videos = try #require(store.history(for: .today, now: Date(epochMillis: start + 124_000)).first?.videos)
+        #expect(videos.count == 1)
+        let row = try #require(videos.first)
+        #expect(row.videoId == "81462335")
+        #expect(row.watchCount == 2)
+        #expect(row.watchedMs == 4_000 + 120_000)
+    }
+
+    @Test("History keeps adjacent Netflix episodes as separate rows when video ids differ")
+    func historyKeepsNetflixEpisodeChangeSeparate() throws {
+        let start = local(2024, 1, 1, 12).epochMillis
+        let store = try EventStore(path: ":memory:")
+        _ = try store.record(flush(sentAt: start - 1, views: []), serverTime: start - 1)
+
+        let firstEpisode = FlushView(
+            viewId: "ep-1", service: "netflix", videoId: "1001",
+            url: "https://www.netflix.com/watch/1001", durationSec: 1800, adapterId: "netflix",
+            tabId: 12, startedAt: start, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start, pos: 0),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 90_000, pos: 90, reason: "video-changed"),
+            ])
+        let nextEpisode = FlushView(
+            viewId: "ep-2", service: "netflix", videoId: "1002",
+            url: "https://www.netflix.com/watch/1002", durationSec: 1800, adapterId: "netflix",
+            tabId: 12, startedAt: start + 90_000, open: false, events: [
+                RawEvent(seq: 1, type: .play, t: start + 90_000, pos: 0),
+                RawEvent(seq: 2, type: .viewEnded, t: start + 210_000, pos: 120, reason: "nav"),
+            ])
+        _ = try store.record(flush(sentAt: start + 210_000, views: [firstEpisode, nextEpisode]), serverTime: start + 210_000)
+
+        let videos = try #require(store.history(for: .today, now: Date(epochMillis: start + 210_000)).first?.videos)
+        #expect(videos.count == 2)
+        #expect(videos.map(\.videoId).sorted() == ["1001", "1002"])
+        #expect(videos.first { $0.videoId == "1001" }?.watchCount == 1)
+        #expect(videos.first { $0.videoId == "1002" }?.watchCount == 1)
+    }
+
     @Test("History leaves out a generic-fallback View that neither its own URL nor its tab can name")
     func historyDropsUnidentifiableGenericView() throws {
         let start = local(2024, 1, 1, 12).epochMillis
@@ -514,16 +573,20 @@ struct MenubarPopoverReadModelTests {
         #expect(try store.totals(in: DateRange(startMs: start, endMs: start + 5_000)).watchedMs == 5_000)
     }
 
-    @Test("readTimeVideoId recovers a YouTube video's real id from its URL, only for a generic-fallback id")
+    @Test("readTimeVideoId recovers YouTube and Netflix watch ids from URL, only for generic-fallback ids")
     func readTimeVideoIdRules() {
         #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/watch?v=abc123") == "abc123")
         #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/shorts/abc123") == "abc123")
         #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/live/abc123") == "abc123")
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.netflix.com/watch/81462335") == "81462335")
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.netflix.com/gb/watch/81462335?trackId=1") == "81462335")
         // Already a real id (the Adapter bound from the start) — left alone.
         #expect(EventStore.readTimeVideoId(stored: "abc123", url: "https://www.youtube.com/watch?v=abc123") == "abc123")
+        #expect(EventStore.readTimeVideoId(stored: "81462335", url: "https://www.netflix.com/watch/81462335") == "81462335")
         // Nothing to recover: the page names no video.
         #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.youtube.com/") == "sha1:deadbeef")
-        // Not YouTube at all — a generic id from some other Adapter-less site
+        #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://www.netflix.com/browse") == "sha1:deadbeef")
+        // Not YouTube/Netflix at all — a generic id from some other Adapter-less site
         // is exactly as untrustworthy as the schema says, and stays put.
         #expect(EventStore.readTimeVideoId(stored: "sha1:deadbeef", url: "https://example.com/watch?v=abc123") == "sha1:deadbeef")
     }
@@ -667,8 +730,9 @@ struct MenubarPopoverReadModelTests {
         let row = try #require(videos.first)
         #expect(row.watchCount == 2)
         #expect(row.watchedMs == 50_000)
-        // Coverage unions the two passes: 0–20s then 0–30s = 30s of a 60s Short.
-        #expect(row.coverage == 0.5)
+        // Shorts use the larger of unique media-span coverage and watched-time
+        // coverage; here that's 50s / 60s = 0.8333…
+        #expect(row.coverage == (50.0 / 60.0))
     }
 
     @Test("History sorts the currently-playing video first, then by last watched")
