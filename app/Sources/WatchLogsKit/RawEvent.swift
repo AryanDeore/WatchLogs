@@ -26,7 +26,8 @@ public struct RawEvent: Equatable, Sendable {
     /// `sample`: the heartbeat's view of the two conditions.
     public var playing: Bool?
     public var visible: Bool?
-    /// `viewEnded`: `nav` | `tab-closed` | `video-changed` | `crash-recovered`,
+    /// `viewEnded`: `nav` | `tab-closed` | `video-changed` | `crash-recovered` |
+    /// `paused-out`,
     /// or an unrecognised reason recorded uninterpreted.
     public var reason: String?
 

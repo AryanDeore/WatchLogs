@@ -201,6 +201,77 @@ test("a hidden tab reports visible:false, and the wire never says background", {
 });
 
 test(
+  "a paused, abandoned View is closed after about a minute",
+  { timeout: 110_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "sample"), {
+        timeoutMs: 15_000,
+        message: "expected playback to begin",
+      });
+
+      await page.evaluate(() => document.getElementById("v").pause());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "pause"), {
+        timeoutMs: 15_000,
+        message: "expected a pause event",
+      });
+      await hidePage(ext.context, page);
+
+      const ended = await waitUntil(
+        () => eventsTagged(server, tag).find((event) => event.type === "viewEnded"),
+        { timeoutMs: 80_000, message: "expected paused-out viewEnded within about a minute" },
+      );
+      assert.equal(ended.reason, "paused-out");
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test(
+  "resuming after paused-out starts a new captured View without a reload",
+  { timeout: 150_000 },
+  async () => {
+    const tag = uniqueTag();
+    const page = await ext.context.newPage();
+    try {
+      await page.goto(taggedUrl(server, "/player.html", tag, { src: "/fixtures/medium.webm" }));
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "sample"), {
+        timeoutMs: 15_000,
+      });
+
+      await page.evaluate(() => document.getElementById("v").pause());
+      await waitUntil(() => eventsTagged(server, tag).some((event) => event.type === "pause"), {
+        timeoutMs: 15_000,
+      });
+      await hidePage(ext.context, page);
+      await waitUntil(
+        () => eventsTagged(server, tag).find((event) => event.type === "viewEnded" && event.reason === "paused-out"),
+        { timeoutMs: 80_000, message: "expected paused-out close" },
+      );
+
+      await showPage(ext.context, page);
+      await page.evaluate(() => document.getElementById("v").play());
+      await waitUntil(
+        () => viewsTagged(server, tag).length >= 2,
+        { timeoutMs: 20_000, message: "expected a second View after resume" },
+      );
+      await waitUntil(
+        () => eventsTagged(server, tag).filter((event) => event.type === "sample" && event.playing === true).length >= 2,
+        { timeoutMs: 20_000, message: "expected resumed playback samples" },
+      );
+    } finally {
+      await page.close();
+    }
+  },
+);
+
+test(
   "coming back into view re-describes the player, even with no heartbeat to catch it",
   { timeout: 30_000 },
   async () => {
