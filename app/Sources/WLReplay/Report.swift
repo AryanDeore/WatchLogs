@@ -271,7 +271,7 @@ enum ReplayBuilder {
         // The exact wording `HistoryPane` falls back to when there is no
         // coverage bar to draw. Repeated here rather than approximated: the
         // point of this section is to say what is on screen.
-        let status = row.isPlaying ? "Playing now" : row.isOpen ? "Still watching" : "No fixed length"
+        let status = row.isPlaying ? "Playing now" : row.isOpen ? "Still active" : "No fixed length"
 
         return ReplayReport.HistoryRow(
             dayLabel: day.label,
